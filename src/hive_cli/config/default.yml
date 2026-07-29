@@ -1,0 +1,141 @@
+---
+# Hive CLI Default Configuration
+# This file ships with the package and provides all default values.
+# User configs (.hive.yml, .hive.local.yml) override these settings.
+
+agents:
+  order:
+    - claude
+    - gemini
+    - codex
+    - agent
+    - copilot
+
+  configs:
+    claude:
+      resume_args: ["--continue"]
+      skip_permissions_args: ["--dangerously-skip-permissions"]
+      extra_args: []
+      extra_dirs_flag: "--add-dir"
+      profile:
+        # CLAUDE_CONFIG_DIR fully isolates config, credentials, and session history.
+        # Source: Anthropic docs (verified).
+        config_dir_env: CLAUDE_CONFIG_DIR
+
+    copilot:
+      resume_args: ["--continue"]
+      skip_permissions_args: ["--allow-all"]
+      extra_args: []
+      extra_dirs_flag: "--add-dir"
+      profile:
+        # COPILOT_HOME relocates config, session history, and logs.
+        # Source: docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference (verified).
+        # CAVEAT: Auth tokens are stored in the OS keychain by default and are NOT
+        # isolated by COPILOT_HOME alone. Config+history isolates cleanly; logins may
+        # be shared. Uncomment seed_files to force plaintext token storage (less secure):
+        # seed_files:
+        #   settings.json: '{"storeTokenPlaintext": true}\n'
+        config_dir_env: COPILOT_HOME
+
+    codex:
+      resume_args: ["resume", "--last"]
+      skip_permissions_args: ["--full-auto"]
+      extra_args: []
+      extra_dirs_flag: "--add-dir"
+      profile:
+        # CODEX_HOME relocates config, auth (when file-based), and session history.
+        # Source: github.com/openai/codex source + developers.openai.com/codex (verified).
+        # seed_files forces file-based credential storage so each profile gets its own
+        # auth.json — without this, credentials may be shared via the OS keychain.
+        config_dir_env: CODEX_HOME
+        seed_files:
+          config.toml: |
+            cli_auth_credentials_store = "file"
+
+    gemini:
+      resume_args: ["--resume", "latest"]
+      skip_permissions_args: ["-y"]
+      extra_args: []
+      extra_dirs_flag: "--include-directories"
+      profile:
+        # GEMINI_CLI_HOME sets the base directory; config lands in $GEMINI_CLI_HOME/.gemini.
+        # Source: github.com/google-gemini/gemini-cli packages/core/src/utils/paths.ts (verified).
+        # NOTE: This env var is undocumented as of the nightly build (v0.47.0-nightly); it
+        # exists in source but may change without notice. Verify against your installed version.
+        # GEMINI_FORCE_FILE_STORAGE=true forces credentials into a file under GEMINI_CLI_HOME
+        # rather than the OS keychain, enabling full login isolation.
+        config_dir_env: GEMINI_CLI_HOME
+        extra_env:
+          GEMINI_FORCE_FILE_STORAGE: "true"
+
+    # Cursor agent CLI - no extra dirs support
+    agent:
+      resume_args: ["resume"]
+      skip_permissions_args: ["-f"]
+      extra_args: []
+      profile:
+        # CURSOR_CONFIG_DIR relocates cli-config.json and the chats/ session history.
+        # Source: cursor.com/docs/cli/reference/configuration (verified).
+        # CAVEAT: Auth tokens (access/refresh) are stored in the OS Keychain and are NOT
+        # relocated by CURSOR_CONFIG_DIR. Login isolation requires overriding HOME, which
+        # hive does not do. Config+history isolates cleanly; logins will be shared.
+        config_dir_env: CURSOR_CONFIG_DIR
+
+    # Cursor agent alternative name - no extra dirs support
+    cursor-agent:
+      resume_args: ["resume"]
+      skip_permissions_args: ["-f"]
+      extra_args: []
+      profile:
+        # Same as 'agent' above. See CURSOR_CONFIG_DIR caveats.
+        config_dir_env: CURSOR_CONFIG_DIR
+
+resume:
+  enabled: false
+
+worktrees:
+  enabled: true
+  parent_dir: "~/.worktrees/{repo}/{branch}"
+  resume: true # Enable resume for worktree runs (config-driven, not explicit flag)
+  copy_files: []
+  symlink_files: []
+
+  # Auto-select: show picker but auto-proceed after timeout. Any key cancels.
+  auto_select:
+    enabled: false
+    branch: "-" # Branch to auto-select. Use "-" for repo's default branch.
+    timeout: 3.0 # Seconds before auto-selection
+
+  post_create:
+    - command: "mise trust"
+      if_exists: "mise.toml"
+
+    - command: "mise install"
+      if_exists: "mise.toml"
+
+    - command: "pnpm install --frozen-lockfile"
+      if_exists: "pnpm-lock.yaml"
+
+    - command: "yarn install --frozen-lockfile"
+      if_exists: "yarn.lock"
+
+    - command: "npm install"
+      if_exists: "package-lock.json"
+
+    - command: "uv sync --frozen"
+      if_exists: "pyproject.toml"
+
+zellij:
+  # Multi-agent layout bundled with this package. Also accepts a layout name
+  # from ~/.config/zellij/layouts/ or an explicit path (see resolve_layout()
+  # in utils/layouts.py). Set to null for Zellij's built-in default.
+  layout: "agent"
+  session_name: "{repo}"
+
+github:
+  fetch_issues: true
+  issue_limit: 20
+
+# Additional directories to pass to the agent via its extra_dirs_flag.
+# Relative paths resolve against the main repo root.
+extra_dirs: []
