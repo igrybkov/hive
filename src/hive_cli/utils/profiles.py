@@ -6,7 +6,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..config import get_agent_config, get_profiles_root
+from ..agents.profiles import get_profiles_root
+from ..config import get_agent_config
 from .fuzzy import FuzzyItem, fuzzy_select
 
 # Sentinel value returned from select_profile when user creates a new profile

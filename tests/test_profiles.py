@@ -5,12 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from hive_cli.agents.profiles import get_profiles_root, resolve_profile_env
 from hive_cli.config import (
     AgentConfig,
     AgentProfileConfig,
-    get_profiles_root,
     reset_settings,
-    resolve_profile_env,
 )
 from hive_cli.utils.profiles import (
     DEFAULT_PROFILE_VALUE,

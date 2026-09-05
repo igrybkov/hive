@@ -18,9 +18,9 @@ from ..config import (
     CONFIG_FILE,
     GLOBAL_CONFIG_DIR,
     LOCAL_CONFIG_FILE,
-    get_xdg_config_home,
     load_config,
 )
+from ..core import paths
 from ..utils import error, info, success
 
 console = Console()
@@ -54,7 +54,7 @@ def show_active_config() -> None:
 
 def show_common_paths() -> None:
     """Display common configuration paths."""
-    xdg_config = get_xdg_config_home()
+    xdg_config = paths.xdg_config_home()
     global_path = xdg_config / GLOBAL_CONFIG_DIR / "hive.yml"
 
     console.print()

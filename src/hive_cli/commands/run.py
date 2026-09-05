@@ -9,13 +9,13 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from ..agents import detect_agent
+from ..agents.launch import get_extra_dirs_args
+from ..agents.profiles import resolve_profile_env
 from ..config import (
     KNOWN_AGENTS,
     get_agent_config,
-    get_extra_dirs_args,
     get_runtime_settings,
     get_settings,
-    resolve_profile_env,
 )
 from ..utils import error, format_yellow
 from .exec_runner import run_in_worktree
@@ -65,6 +65,183 @@ def _get_pane_name_info(agent_name: str) -> tuple[str, bool]:
 def _complete_agent(ctx, param, incomplete):
     """Shell completion for --agent option."""
     return [agent for agent in KNOWN_AGENTS if agent.startswith(incomplete)]
+
+
+def _resolve_resume_flag(config, worktree: str | None, resume: bool | None) -> bool:
+    """Determine resume behavior from config if not explicitly set on the CLI."""
+    if resume is not None:
+        return resume
+    # Use worktrees.resume if in worktree mode, otherwise resume.enabled
+    if worktree is not None:
+        return config.worktrees.resume
+    return config.resume.enabled
+
+
+def _apply_skip_permissions_and_profile(rt, config, skip_permissions, profile) -> None:
+    """Resolve skip-permissions and profile onto runtime settings (mutates rt).
+
+    skip-permissions: CLI flag > env var > config.
+    profile: CLI flag > HIVE_AGENT_PROFILE env var (already in rt.agent_profile
+    if set via env); "default"/empty string normalize to None (passthrough).
+    """
+    if skip_permissions is not None:
+        rt.skip_permissions = skip_permissions
+    elif not rt.skip_permissions:
+        rt.skip_permissions = config.worktrees.skip_permissions
+
+    if profile is not None:
+        rt.agent_profile = profile if profile and profile != "default" else None
+
+
+def _require_detected_agent(agent: str | None):
+    """Detect the agent for validation/pane naming, or error and exit(1)."""
+    detected = detect_agent(preferred=agent)
+    if detected is not None:
+        return detected
+    if agent:
+        error(
+            f"Agent '{format_yellow(agent)}' is not available. "
+            f"Is it installed and in your PATH?"
+        )
+    else:
+        agents_list = ", ".join(KNOWN_AGENTS)
+        error(f"No AI coding agent found. Install one of: {agents_list}")
+    sys.exit(1)
+
+
+def _run_resume_then_command(
+    current_cmd,
+    current_agent_name,
+    current_agent_config,
+    skip_perm_args,
+    agent_extra_args,
+    extra_dir_args,
+    args,
+    resume,
+) -> int:
+    """Try resume_args first when enabled/configured, else run the base command."""
+    if resume and current_agent_config and current_agent_config.resume_args:
+        resume_cmd = [
+            current_cmd[0],
+            *current_agent_config.resume_args,
+            *skip_perm_args,
+            *agent_extra_args,
+            *extra_dir_args,
+            *args,
+        ]
+        child_env = get_runtime_settings().build_child_env()
+        child_env.update(
+            resolve_profile_env(
+                current_agent_name,
+                get_runtime_settings().agent_profile,
+            )
+        )
+        result = subprocess.run(
+            resume_cmd,
+            stderr=subprocess.DEVNULL,
+            env=child_env,
+        )
+        if result.returncode == 0:
+            return 0
+        # Resume failed, fall back to base command
+
+    # Build final command with skip-permissions, extra_args, and extra-dirs
+    injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args]
+    if injected:
+        final_cmd = [current_cmd[0], *injected, *current_cmd[1:]]
+    else:
+        final_cmd = current_cmd
+
+    # Run the agent; inject profile env vars (config-dir redirect + creds)
+    child_env = get_runtime_settings().build_child_env()
+    child_env.update(
+        resolve_profile_env(
+            current_agent_name,
+            get_runtime_settings().agent_profile,
+        )
+    )
+    result = subprocess.run(final_cmd, env=child_env)
+    return result.returncode
+
+
+def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
+    """Build the run_command callable exec_runner's restart loop invokes.
+
+    Re-detects the agent (and re-reads skip-permissions/extra args/extra dirs)
+    on every call, so it respects HIVE_AGENT/Ctrl+A/Ctrl+S changes made by the
+    interactive picker between restarts.
+    """
+
+    def run_with_dynamic_agent(command: list[str]) -> int:
+        """Run agent, re-detecting from HIVE_AGENT env var."""
+        # If user explicitly passed -a/--agent, honor that choice
+        # Otherwise, re-read HIVE_AGENT from environment (may be changed by Ctrl+A)
+        preferred = agent if cli_specified_agent else None
+        result = _detect_current_agent(preferred, args)
+        if result is None:
+            error("No agent available")
+            return 1
+
+        current_agent_name, current_cmd = result
+
+        # Re-read skip-permissions (may be toggled by Ctrl+S in picker)
+        # Get skip-permissions args and extra_args for current agent
+        skip_perm_args: list[str] = []
+        agent_extra_args: list[str] = []
+        current_agent_config = get_agent_config(current_agent_name)
+        if current_agent_config:
+            if get_runtime_settings().skip_permissions:
+                skip_perm_args = current_agent_config.skip_permissions_args
+            agent_extra_args = current_agent_config.extra_args
+
+        extra_dir_args = get_extra_dirs_args(current_agent_name)
+
+        return _run_resume_then_command(
+            current_cmd,
+            current_agent_name,
+            current_agent_config,
+            skip_perm_args,
+            agent_extra_args,
+            extra_dir_args,
+            args,
+            resume,
+        )
+
+    return run_with_dynamic_agent
+
+
+def _compute_use_dynamic_runner(
+    rt,
+    worktree,
+    restart,
+    restart_confirmation,
+    has_resume_args,
+    has_agent_extra_args,
+    has_extra_dirs,
+) -> bool:
+    """True when the restart loop needs the dynamic re-detecting runner.
+
+    Use dynamic runner when:
+    - restart/restart_confirmation mode (needs restart loop)
+    - interactive worktree selection (-w=-): the picker can mutate agent,
+      profile, skip-permissions, and workdir after this is computed, so we
+      must always use the dynamic runner when selection is in play.
+    - resume is enabled AND agent has resume_args (needs retry logic)
+    - skip-permissions is enabled (needs arg injection)
+    - extra_args configured (needs arg injection per agent)
+    - extra_dirs configured (needs arg injection per agent)
+    - profile is active upfront (via --profile flag or HIVE_AGENT_PROFILE env)
+    """
+    return (
+        restart
+        or restart_confirmation
+        or worktree == "-"
+        or has_resume_args
+        or rt.skip_permissions
+        or has_agent_extra_args
+        or has_extra_dirs
+        or bool(rt.agent_profile)
+    )
 
 
 run_app = App(
@@ -188,51 +365,18 @@ def run(
     """
     # Load config once at the start
     config = get_settings()
+    resume = _resolve_resume_flag(config, worktree, resume)
 
-    # Determine resume behavior from config if not explicitly set
-    if resume is None:
-        # Use worktrees.resume if in worktree mode, otherwise resume.enabled
-        if worktree is not None:
-            resume = config.worktrees.resume
-        else:
-            resume = config.resume.enabled
-
-    # Resolve skip-permissions: CLI flag > env var > config → write to runtime settings
     rt = get_runtime_settings()
-    if skip_permissions is not None:
-        # CLI flag explicitly set — write to runtime settings
-        rt.skip_permissions = skip_permissions
-    elif not rt.skip_permissions:
-        # No CLI flag, no env var — fall back to config
-        rt.skip_permissions = config.worktrees.skip_permissions
-
-    # Resolve profile: CLI flag > HIVE_AGENT_PROFILE env var
-    # (already in rt.agent_profile if set via env)
-    if profile is not None:
-        # Normalize "default" (or empty string) to None (passthrough semantics)
-        rt.agent_profile = profile if profile and profile != "default" else None
+    _apply_skip_permissions_and_profile(rt, config, skip_permissions, profile)
 
     # Initial agent detection (for validation and pane name)
     # This may be overridden by HIVE_AGENT set during worktree selection (Ctrl+A)
-    detected = detect_agent(preferred=agent)
-
-    if detected is None:
-        if agent:
-            error(
-                f"Agent '{format_yellow(agent)}' is not available. "
-                f"Is it installed and in your PATH?"
-            )
-        else:
-            agents_list = ", ".join(KNOWN_AGENTS)
-            error(f"No AI coding agent found. Install one of: {agents_list}")
-        sys.exit(1)
+    detected = _require_detected_agent(agent)
 
     # Check if we need resume logic (agent has resume_args configured)
     agent_config = get_agent_config(detected.name) if resume else None
     has_resume_args = agent_config and agent_config.resume_args
-
-    # Check if we need skip-permissions logic
-    has_skip_permissions = rt.skip_permissions
 
     # Check if user explicitly specified -a/--agent on command line
     # (as opposed to it being populated from HIVE_AGENT env var)
@@ -242,80 +386,9 @@ def run(
 
     # Create a dynamic command runner that re-detects agent on each run
     # This respects HIVE_AGENT changes from the interactive picker (Ctrl+A)
-    def run_with_dynamic_agent(command: list[str]) -> int:
-        """Run agent, re-detecting from HIVE_AGENT env var."""
-        # If user explicitly passed -a/--agent, honor that choice
-        # Otherwise, re-read HIVE_AGENT from environment (may be changed by Ctrl+A)
-        preferred = agent if cli_specified_agent else None
-        result = _detect_current_agent(preferred, args)
-        if result is None:
-            error("No agent available")
-            return 1
-
-        current_agent_name, current_cmd = result
-
-        # Re-read skip-permissions (may be toggled by Ctrl+S in picker)
-        # Get skip-permissions args and extra_args for current agent
-        skip_perm_args: list[str] = []
-        agent_extra_args: list[str] = []
-        current_agent_config = get_agent_config(current_agent_name)
-        if current_agent_config:
-            if get_runtime_settings().skip_permissions:
-                skip_perm_args = current_agent_config.skip_permissions_args
-            agent_extra_args = current_agent_config.extra_args
-
-        extra_dir_args = get_extra_dirs_args(current_agent_name)
-
-        # Handle resume logic if enabled and agent has resume args
-        if resume:
-            current_agent_config = get_agent_config(current_agent_name)
-            if current_agent_config and current_agent_config.resume_args:
-                # Try resume first
-                resume_cmd = [
-                    current_cmd[0],
-                    *current_agent_config.resume_args,
-                    *skip_perm_args,
-                    *agent_extra_args,
-                    *extra_dir_args,
-                    *args,
-                ]
-                child_env = get_runtime_settings().build_child_env()
-                child_env.update(
-                    resolve_profile_env(
-                        current_agent_name,
-                        get_runtime_settings().agent_profile,
-                    )
-                )
-                result = subprocess.run(
-                    resume_cmd,
-                    stderr=subprocess.DEVNULL,
-                    env=child_env,
-                )
-                if result.returncode == 0:
-                    return 0
-                # Resume failed, fall back to base command
-
-        # Build final command with skip-permissions, extra_args, and extra-dirs
-        injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args]
-        if injected:
-            final_cmd = [
-                current_cmd[0],
-                *injected,
-                *current_cmd[1:],
-            ]
-        else:
-            final_cmd = current_cmd
-
-        # Run the agent; inject profile env vars (config-dir redirect + creds)
-        child_env = get_runtime_settings().build_child_env()
-        child_env.update(
-            resolve_profile_env(
-                current_agent_name,
-                get_runtime_settings().agent_profile,
-            )
-        )
-        result = subprocess.run(final_cmd, env=child_env)
-        return result.returncode
+    run_with_dynamic_agent = _make_dynamic_agent_runner(
+        agent, args, resume, cli_specified_agent
+    )
 
     # Compute extra-dirs args and extra_args for initial agent
     initial_extra_dirs = get_extra_dirs_args(detected.name)
@@ -324,27 +397,14 @@ def run(
     initial_agent_extra_args = init_agent_config.extra_args if init_agent_config else []
     has_agent_extra_args = bool(initial_agent_extra_args)
 
-    # Use dynamic runner when:
-    # - restart/restart_confirmation mode (needs restart loop)
-    # - interactive worktree selection (-w=-): the picker can mutate agent,
-    #   profile, skip-permissions, and workdir after use_dynamic_runner is computed,
-    #   so we must always use the dynamic runner when selection is in play.
-    # - resume is enabled AND agent has resume_args (needs retry logic)
-    # - skip-permissions is enabled (needs arg injection)
-    # - extra_args configured (needs arg injection per agent)
-    # - extra_dirs configured (needs arg injection per agent)
-    # - profile is active upfront (via --profile flag or HIVE_AGENT_PROFILE env)
-    has_profile = bool(rt.agent_profile)
-    is_interactive_selection = worktree == "-"
-    use_dynamic_runner = (
-        restart
-        or restart_confirmation
-        or is_interactive_selection
-        or has_resume_args
-        or has_skip_permissions
-        or has_agent_extra_args
-        or has_extra_dirs
-        or has_profile
+    use_dynamic_runner = _compute_use_dynamic_runner(
+        rt,
+        worktree,
+        restart,
+        restart_confirmation,
+        has_resume_args,
+        has_agent_extra_args,
+        has_extra_dirs,
     )
 
     # Determine auto_select settings: CLI overrides config
