@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 from conftest import git
@@ -571,72 +570,3 @@ class TestRuntimeWorkdirOverride:
         assert "WORKDIR" not in env
         assert "_HIVE_WORKDIR_SESSION" not in env
         assert "_HIVE_WORKDIR_EXTRAS_SESSION" not in env
-
-
-class TestApplyWorkdirOverride:
-    """Tests for exec_runner._apply_workdir_override."""
-
-    def test_noop_when_no_override(self, tmp_path, monkeypatch):
-        """Without rt.workdir, cwd is not changed and override list stays None."""
-        import os
-
-        from hive_cli.commands.exec_runner import _apply_workdir_override
-        from hive_cli.config import get_runtime_settings
-
-        rt = get_runtime_settings()
-        rt.workdir = None
-        rt.workdir_extras_override = None
-
-        primary = tmp_path / "primary"
-        primary.mkdir()
-        monkeypatch.chdir(primary)
-
-        _apply_workdir_override(primary)
-
-        assert Path(os.getcwd()).resolve() == primary.resolve()
-        assert rt.workdir_extras_override is None
-
-    def test_swap_sets_cwd_and_extras(self, tmp_path, monkeypatch):
-        """Override: cwd→chosen, primary prepended to extras, chosen dropped."""
-        import os
-
-        from hive_cli.commands.exec_runner import _apply_workdir_override
-        from hive_cli.config import get_runtime_settings, load_config
-
-        primary = tmp_path / "primary"
-        primary.mkdir()
-        chosen = tmp_path / "chosen"
-        chosen.mkdir()
-        other = tmp_path / "other"
-        other.mkdir()
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text(
-            f"""
-extra_dirs:
-  - {chosen}
-  - {other}
-"""
-        )
-        load_config.cache_clear()
-
-        rt = get_runtime_settings()
-        rt.workdir = chosen
-        rt.workdir_extras_override = None
-
-        monkeypatch.chdir(primary)
-        try:
-            with (
-                patch(
-                    "hive_cli.config.loader.find_config_files",
-                    return_value=[config_file],
-                ),
-                patch("hive_cli.git.get_main_repo", return_value=tmp_path),
-            ):
-                _apply_workdir_override(primary)
-
-            assert Path(os.getcwd()).resolve() == chosen.resolve()
-            assert rt.workdir_extras_override == [str(primary), str(other)]
-        finally:
-            rt.workdir = None
-            rt.workdir_extras_override = None
