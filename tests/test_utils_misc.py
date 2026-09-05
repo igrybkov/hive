@@ -23,7 +23,6 @@ from hive_cli.utils.deps import (
     install_dependencies,
     run_post_create_commands,
 )
-from hive_cli.utils.editors import EditorConfig, get_available_editors, open_in_editor
 from hive_cli.utils.fuzzy import FuzzyItem
 from hive_cli.utils.workdir import WORKDIR_CLEAR, select_workdir
 
@@ -484,35 +483,16 @@ class TestSelectAgent:
 
 
 # ---------------------------------------------------------------------------
-# utils/editors.py
+# utils/editors.py (select_editor picker; get_available_editors/open_in_editor
+# themselves are tested in test_services_editors.py, moved with their code)
 # ---------------------------------------------------------------------------
-
-
-class TestGetAvailableEditors:
-    def test_filters_to_installed_editors(self):
-        def fake_which(cmd):
-            return "/usr/bin/code" if cmd == "code" else None
-
-        with patch("hive_cli.utils.editors.shutil.which", side_effect=fake_which):
-            available = get_available_editors()
-
-        assert [e.command for e in available] == ["code"]
-
-    def test_no_editors_installed_returns_empty(self):
-        with patch("hive_cli.utils.editors.shutil.which", return_value=None):
-            assert get_available_editors() == []
-
-    def test_all_editors_installed(self):
-        with patch("hive_cli.utils.editors.shutil.which", return_value="/usr/bin/x"):
-            available = get_available_editors()
-        assert {e.command for e in available} == {"code", "pycharm", "cursor"}
 
 
 class TestSelectEditorNoneAvailable:
     def test_returns_none_and_reports_error(self):
         from hive_cli.utils.editors import select_editor
 
-        with patch("hive_cli.utils.editors.shutil.which", return_value=None):
+        with patch("hive_cli.services.editors.shutil.which", return_value=None):
             assert select_editor() is None
 
 
@@ -524,7 +504,7 @@ class TestSelectEditorSingleAvailable:
             return "/usr/bin/code" if cmd == "code" else None
 
         with (
-            patch("hive_cli.utils.editors.shutil.which", side_effect=fake_which),
+            patch("hive_cli.services.editors.shutil.which", side_effect=fake_which),
             patch("hive_cli.utils.editors.fuzzy_select") as mock_select,
         ):
             result = select_editor()
@@ -538,7 +518,7 @@ class TestSelectEditorMultipleAvailable:
         from hive_cli.utils.editors import select_editor
 
         with (
-            patch("hive_cli.utils.editors.shutil.which", return_value="/usr/bin/x"),
+            patch("hive_cli.services.editors.shutil.which", return_value="/usr/bin/x"),
             patch("hive_cli.utils.editors.fuzzy_select", return_value="cursor"),
         ):
             result = select_editor()
@@ -549,26 +529,7 @@ class TestSelectEditorMultipleAvailable:
         from hive_cli.utils.editors import select_editor
 
         with (
-            patch("hive_cli.utils.editors.shutil.which", return_value="/usr/bin/x"),
+            patch("hive_cli.services.editors.shutil.which", return_value="/usr/bin/x"),
             patch("hive_cli.utils.editors.fuzzy_select", return_value=None),
         ):
             assert select_editor() is None
-
-
-class TestOpenInEditor:
-    def test_opens_with_chat_flag_when_present(self, tmp_path):
-        editor = EditorConfig("Cursor", "cursor", "--new-window")
-        with patch("hive_cli.utils.editors.subprocess.Popen") as mock_popen:
-            open_in_editor(tmp_path, editor)
-
-        args, kwargs = mock_popen.call_args
-        assert args[0] == ["cursor", "--new-window", str(tmp_path)]
-        assert kwargs["start_new_session"] is True
-
-    def test_opens_without_chat_flag(self, tmp_path):
-        editor = EditorConfig("VS Code", "code", None)
-        with patch("hive_cli.utils.editors.subprocess.Popen") as mock_popen:
-            open_in_editor(tmp_path, editor)
-
-        args, _kwargs = mock_popen.call_args
-        assert args[0] == ["code", str(tmp_path)]
