@@ -2,113 +2,21 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from ..git import (
+    changed_files,
+    commits_ahead_behind,
+    fetch_branch,
     get_current_branch,
     get_default_branch,
     get_main_repo,
     list_worktrees,
 )
 from ..ui.console import info, out
-
-
-def _fetch_origin(main_repo: Path, default_branch: str) -> bool:
-    """Fetch from origin.
-
-    Args:
-        main_repo: Path to main repository.
-        default_branch: Default branch name.
-
-    Returns:
-        True if fetch succeeded.
-    """
-    try:
-        subprocess.run(
-            ["git", "-C", str(main_repo), "fetch", "origin", default_branch, "--quiet"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except subprocess.CalledProcessError:
-        return False
-
-
-def _get_commits_ahead_behind(path: Path, default_branch: str) -> tuple[int, int]:
-    """Get commits ahead/behind origin/default_branch.
-
-    Args:
-        path: Path to worktree.
-        default_branch: Default branch name.
-
-    Returns:
-        Tuple of (ahead, behind) counts.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(path),
-                "rev-list",
-                "--count",
-                f"HEAD..origin/{default_branch}",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        behind = int(result.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError):
-        behind = 0
-
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(path),
-                "rev-list",
-                "--count",
-                f"origin/{default_branch}..HEAD",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        ahead = int(result.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError):
-        ahead = 0
-
-    return ahead, behind
-
-
-def _get_changed_files(path: Path, default_branch: str, limit: int = 5) -> list[str]:
-    """Get changed files that may conflict.
-
-    Args:
-        path: Path to worktree.
-        default_branch: Default branch name.
-        limit: Maximum number of files to return.
-
-    Returns:
-        List of changed file names.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path), "diff", "--name-only", f"origin/{default_branch}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        files = result.stdout.strip().splitlines()
-        return files[:limit]
-    except subprocess.CalledProcessError:
-        return []
 
 
 def _check_worktree(
@@ -131,7 +39,7 @@ def _check_worktree(
     if branch == default_branch:
         return
 
-    ahead, behind = _get_commits_ahead_behind(path, default_branch)
+    ahead, behind = commits_ahead_behind(path, default_branch)
 
     # Determine status
     if behind == 0:
@@ -157,7 +65,7 @@ def _check_worktree(
 
     # Show potential conflicts if behind
     if behind > 0:
-        files = _get_changed_files(path, default_branch)
+        files = changed_files(path, default_branch)
         if files:
             out.print("    [dim]Changed files that may conflict:[/]")
             for f in files:
@@ -177,7 +85,7 @@ def check_rebase(fetch: bool = False) -> None:
 
     if fetch:
         info("Fetching from origin...")
-        _fetch_origin(main_repo, default_branch)
+        fetch_branch(main_repo, default_branch)
         out.print()
 
     out.print("[bold cyan]" + "═" * 55 + "[/]")

@@ -1,5 +1,17 @@
 """Git utilities for hive CLI."""
 
+from .analysis import (
+    HIVE_MANAGED_FILES,
+    MergeSimulation,
+    changed_files,
+    commits_ahead_behind,
+    fetch_branch,
+    get_diff,
+    has_delta,
+    merge_changed_files,
+    show_diff_with_delta,
+    simulate_merge,
+)
 from .repo import get_current_worktree_branch, get_git_root, get_main_repo
 from .worktree import (
     WorktreeInfo,
@@ -19,21 +31,31 @@ from .worktree import (
 )
 
 __all__ = [
+    "HIVE_MANAGED_FILES",
+    "MergeSimulation",
     "WorktreeInfo",
+    "changed_files",
+    "commits_ahead_behind",
     "create_worktree",
     "delete_worktree",
     "expand_path",
+    "fetch_branch",
     "fetch_origin",
     "get_all_branches",
     "get_current_branch",
     "get_current_worktree_branch",
     "get_default_branch",
+    "get_diff",
     "get_git_root",
     "get_main_repo",
     "get_worktree_path",
     "get_worktrees_base",
+    "has_delta",
     "is_worktree_dirty",
     "list_worktrees",
+    "merge_changed_files",
     "sanitize_branch_name",
+    "show_diff_with_delta",
+    "simulate_merge",
     "worktree_exists",
 ]

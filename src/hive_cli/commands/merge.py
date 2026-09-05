@@ -2,58 +2,24 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
-import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
-from rich.console import Console
 
 from ..git import (
+    MergeSimulation,
     get_current_branch,
     get_default_branch,
     get_main_repo,
     get_worktree_path,
     list_worktrees,
+    merge_changed_files,
+    simulate_merge,
 )
-from ..utils import error
-
-# Console for output
-console = Console()
-
-
-# Files hive itself places into every worktree (see handoffs.setup_handoff_symlink).
-# They end up committed by `git add -A` and would be reported as a false overlap.
-HIVE_MANAGED_FILES = frozenset({".claude/HANDOFF.md"})
-
-
-def _get_changed_files(path: Path, default_branch: str) -> list[str]:
-    """Get files changed compared to default branch.
-
-    Args:
-        path: Path to worktree.
-        default_branch: Default branch name.
-
-    Returns:
-        List of changed file names, excluding files managed by hive itself.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path), "diff", "--name-only", default_branch],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return [
-            f
-            for f in result.stdout.strip().splitlines()
-            if f and f not in HIVE_MANAGED_FILES
-        ]
-    except subprocess.CalledProcessError:
-        return []
+from ..ui.console import error, out
 
 
 def _show_file_overlap(main_repo: Path) -> None:
@@ -64,10 +30,10 @@ def _show_file_overlap(main_repo: Path) -> None:
     """
     default_branch = get_default_branch(main_repo)
 
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print("[bold cyan]  File Overlap Analysis[/]")
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print()
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print("[bold cyan]  File Overlap Analysis[/]")
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print()
 
     # Collect changed files per agent
     file_agents: dict[str, list[str]] = defaultdict(list)
@@ -75,30 +41,62 @@ def _show_file_overlap(main_repo: Path) -> None:
     worktrees = list_worktrees(main_repo)
     for wt in worktrees:
         agent_id = "1" if wt.is_main else wt.branch
-        files = _get_changed_files(wt.path, default_branch)
+        files = merge_changed_files(wt.path, default_branch)
         for f in files:
             file_agents[f].append(agent_id)
 
     # Find overlaps
     has_overlap = False
-    console.print("[yellow]Files modified by multiple agents:[/]")
-    console.print()
+    out.print("[yellow]Files modified by multiple agents:[/]")
+    out.print()
 
     for file_path, agents in sorted(file_agents.items()):
         if len(agents) > 1:
             has_overlap = True
-            console.print(f"  [red]{file_path}[/]")
-            console.print(f"    [dim]Modified by agents: {' '.join(agents)}[/]")
+            out.print(f"  [red]{file_path}[/]")
+            out.print(f"    [dim]Modified by agents: {' '.join(agents)}[/]")
 
     if not has_overlap:
-        console.print(
+        out.print(
             "  [green]No overlapping files - agents are working on separate areas[/]"
         )
 
-    console.print()
-    console.print(
+    out.print()
+    out.print(
         "[dim]Tip: Run 'hive merge-preview <agent-id>' to simulate a specific merge[/]"
     )
+
+
+def _print_merge_result(sim: MergeSimulation) -> bool:
+    """Print the outcome of a merge simulation.
+
+    Args:
+        sim: The MergeSimulation to report.
+
+    Returns:
+        True if the merge would succeed without conflicts.
+    """
+    if sim.conflicts:
+        out.print("[red]✗ Merge would have conflicts[/]")
+        out.print()
+        out.print("[bold]Conflicting files:[/]")
+        for f in sim.conflicting_files:
+            out.print(f"  [red]! {f}[/]")
+        return False
+
+    out.print("[green]✓ Merge would succeed without conflicts[/]")
+    out.print()
+    out.print("[dim]Files that would be changed:[/]")
+    for status, file_path in sim.changed:
+        if status == "A":
+            out.print(f"  [green]+ {file_path}[/]")
+        elif status == "M":
+            out.print(f"  [yellow]~ {file_path}[/]")
+        elif status == "D":
+            out.print(f"  [red]- {file_path}[/]")
+        else:
+            out.print(f"  {status} {file_path}")
+    return True
 
 
 def _preview_agent_merge(agent_id: str, main_repo: Path) -> bool:
@@ -123,122 +121,17 @@ def _preview_agent_merge(agent_id: str, main_repo: Path) -> bool:
     branch = get_current_branch(path) or "detached"
     default_branch = get_default_branch(main_repo)
 
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print(f"[bold cyan]  Merge Preview: {branch} → {default_branch}[/]")
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print()
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print(f"[bold cyan]  Merge Preview: {branch} → {default_branch}[/]")
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print()
 
-    # Get branch commit
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        branch_commit = result.stdout.strip()
-    except subprocess.CalledProcessError:
-        error("Failed to get branch commit")
+    sim = simulate_merge(path, main_repo, default_branch, progress=out.print)
+    if not sim.ok:
+        error(sim.error or "Merge simulation failed")
         return False
 
-    # Create temp directory for safe merge test
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-
-        # Clone to temp dir
-        console.print("[cyan]Attempting merge simulation...[/]")
-        console.print()
-
-        try:
-            subprocess.run(
-                ["git", "clone", "--quiet", "--shared", str(main_repo), str(temp_path)],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError:
-            error("Failed to create test environment")
-            return False
-
-        # Checkout default branch
-        try:
-            subprocess.run(
-                ["git", "-C", str(temp_path), "checkout", "--quiet", default_branch],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError:
-            error(f"Failed to checkout {default_branch}")
-            return False
-
-        # Try to merge
-        merge_result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(temp_path),
-                "merge",
-                "--no-commit",
-                "--no-ff",
-                branch_commit,
-            ],
-            capture_output=True,
-        )
-
-        if merge_result.returncode == 0:
-            console.print("[green]✓ Merge would succeed without conflicts[/]")
-            console.print()
-            console.print("[dim]Files that would be changed:[/]")
-
-            # Show changed files
-            result = subprocess.run(
-                ["git", "-C", str(temp_path), "diff", "--cached", "--name-status"],
-                capture_output=True,
-                text=True,
-            )
-
-            for line in result.stdout.strip().splitlines():
-                if not line:
-                    continue
-                parts = line.split("\t", 1)
-                if len(parts) == 2:
-                    status, file_path = parts
-                    if status == "A":
-                        console.print(f"  [green]+ {file_path}[/]")
-                    elif status == "M":
-                        console.print(f"  [yellow]~ {file_path}[/]")
-                    elif status == "D":
-                        console.print(f"  [red]- {file_path}[/]")
-                    else:
-                        console.print(f"  {status} {file_path}")
-
-            # Abort merge
-            subprocess.run(
-                ["git", "-C", str(temp_path), "merge", "--abort"],
-                capture_output=True,
-            )
-            return True
-        else:
-            console.print("[red]✗ Merge would have conflicts[/]")
-            console.print()
-            console.print("[bold]Conflicting files:[/]")
-
-            # Show conflicting files
-            result = subprocess.run(
-                ["git", "-C", str(temp_path), "diff", "--name-only", "--diff-filter=U"],
-                capture_output=True,
-                text=True,
-            )
-
-            for line in result.stdout.strip().splitlines():
-                if line:
-                    console.print(f"  [red]! {line}[/]")
-
-            # Abort merge
-            subprocess.run(
-                ["git", "-C", str(temp_path), "merge", "--abort"],
-                capture_output=True,
-            )
-            return False
+    return _print_merge_result(sim)
 
 
 # Cyclopts App

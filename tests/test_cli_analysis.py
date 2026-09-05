@@ -45,7 +45,7 @@ def _no_delta(monkeypatch):
     local helper that probes for the optional pager - so the diff computation
     and rendering still go through real git and real Rich output.
     """
-    monkeypatch.setattr("hive_cli.commands.diff._has_delta", lambda: False)
+    monkeypatch.setattr("hive_cli.commands.diff.has_delta", lambda: False)
 
 
 # ---------------------------------------------------------------------------
