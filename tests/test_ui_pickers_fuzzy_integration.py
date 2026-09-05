@@ -1,6 +1,6 @@
 """Integration tests for the fuzzy picker that drive a real prompt_toolkit app.
 
-Unlike ``tests/test_pickers_fuzzy.py`` (which mocks ``Application`` entirely), these
+Unlike ``tests/test_ui_pickers_fuzzy.py`` (which mocks ``Application`` entirely), these
 tests run the real ``prompt_toolkit`` event loop against a pipe input and a
 ``DummyOutput``, so the key bindings, filtering, rendering callbacks, update
 callbacks, and auto-select timer are all exercised for real.
