@@ -259,6 +259,50 @@ def isolated_worktrees(tmp_path: Path, monkeypatch):
     reset_settings()
 
 
+@dataclass
+class Scripted:
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int = 0
+
+
+class FakeProc:
+    """Stands in for hive_cli.core.proc.run: records argv, returns scripted output."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.scripts: list[tuple[tuple[str, ...], Scripted]] = []
+
+    def script(self, prefix, *, stdout="", stderr="", returncode=0):
+        self.scripts.append((tuple(prefix), Scripted(stdout, stderr, returncode)))
+
+    def count(self, *prefix: str) -> int:
+        return sum(1 for c in self.calls if tuple(c[: len(prefix)]) == prefix)
+
+    def __call__(self, argv, **kwargs):
+        from hive_cli.core import proc
+        from hive_cli.core.errors import ProcError
+
+        argv = [str(a) for a in argv]
+        self.calls.append(argv)
+        for prefix, s in self.scripts:
+            if tuple(argv[: len(prefix)]) == prefix:
+                result = proc.Result(tuple(argv), s.returncode, s.stdout, s.stderr)
+                break
+        else:
+            result = proc.Result(tuple(argv), 0, "", "")
+        if kwargs.get("check") and result.returncode != 0:
+            raise ProcError(result)
+        return result
+
+
+@pytest.fixture
+def fake_proc(monkeypatch) -> FakeProc:
+    fp = FakeProc()
+    monkeypatch.setattr("hive_cli.core.proc.run", fp)
+    return fp
+
+
 @pytest.fixture
 def make_worktree(temp_git_repo: Path, isolated_worktrees: Path):
     """Factory: ``make_worktree("feat")`` creates a real worktree and returns its path.
