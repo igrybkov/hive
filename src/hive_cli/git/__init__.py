@@ -13,6 +13,14 @@ from .analysis import (
     simulate_merge,
 )
 from .repo import get_current_worktree_branch, get_git_root, get_main_repo
+from .status import (
+    CommitInfo,
+    GitStatusDetail,
+    get_git_status_detail,
+    get_recent_commits,
+    last_commit_summary,
+    upstream_ahead_behind,
+)
 from .worktree import (
     WorktreeInfo,
     create_worktree,
@@ -31,6 +39,8 @@ from .worktree import (
 )
 
 __all__ = [
+    "CommitInfo",
+    "GitStatusDetail",
     "HIVE_MANAGED_FILES",
     "MergeSimulation",
     "WorktreeInfo",
@@ -47,15 +57,19 @@ __all__ = [
     "get_default_branch",
     "get_diff",
     "get_git_root",
+    "get_git_status_detail",
     "get_main_repo",
+    "get_recent_commits",
     "get_worktree_path",
     "get_worktrees_base",
     "has_delta",
     "is_worktree_dirty",
+    "last_commit_summary",
     "list_worktrees",
     "merge_changed_files",
     "sanitize_branch_name",
     "show_diff_with_delta",
     "simulate_merge",
+    "upstream_ahead_behind",
     "worktree_exists",
 ]
