@@ -132,10 +132,20 @@ def _exclude_from_git(worktree_path: Path, rel_path: str) -> None:
         worktree_path: Path to the worktree.
         rel_path: Path to exclude, relative to the worktree root.
     """
-    result = proc.run(
-        ["git", "-C", str(worktree_path), "rev-parse", "--git-path", "info/exclude"],
-        timeout=10,
-    )
+    try:
+        result = proc.run(
+            [
+                "git",
+                "-C",
+                str(worktree_path),
+                "rev-parse",
+                "--git-path",
+                "info/exclude",
+            ],
+            timeout=10,
+        )
+    except OSError:
+        return
     if not result.ok:
         return
 
