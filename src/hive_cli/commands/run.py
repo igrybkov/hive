@@ -17,7 +17,7 @@ from ..config import (
     get_runtime_settings,
     get_settings,
 )
-from ..utils import error, format_yellow
+from ..ui.console import error, format_yellow
 from .exec_runner import run_in_worktree
 
 

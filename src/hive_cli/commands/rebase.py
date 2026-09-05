@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
-from rich.console import Console
 
 from ..git import (
     get_current_branch,
@@ -15,10 +14,7 @@ from ..git import (
     get_main_repo,
     list_worktrees,
 )
-from ..utils import info
-
-# Console for output
-console = Console()
+from ..ui.console import info, out
 
 
 def _fetch_origin(main_repo: Path, default_branch: str) -> bool:
@@ -156,18 +152,18 @@ def _check_worktree(
     else:
         label = f"[bold magenta]Agent {agent_id}[/]"
 
-    console.print(f"{status_icon} {label} [dim]({branch})[/]")
-    console.print(f"    {status_msg}{ahead_msg}")
+    out.print(f"{status_icon} {label} [dim]({branch})[/]")
+    out.print(f"    {status_msg}{ahead_msg}")
 
     # Show potential conflicts if behind
     if behind > 0:
         files = _get_changed_files(path, default_branch)
         if files:
-            console.print("    [dim]Changed files that may conflict:[/]")
+            out.print("    [dim]Changed files that may conflict:[/]")
             for f in files:
-                console.print(f"    [dim]  - {f}[/]")
+                out.print(f"    [dim]  - {f}[/]")
 
-    console.print()
+    out.print()
 
 
 def check_rebase(fetch: bool = False) -> None:
@@ -182,12 +178,12 @@ def check_rebase(fetch: bool = False) -> None:
     if fetch:
         info("Fetching from origin...")
         _fetch_origin(main_repo, default_branch)
-        console.print()
+        out.print()
 
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print(f"[bold cyan]  Rebase Check - against origin/{default_branch}[/]")
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print()
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print(f"[bold cyan]  Rebase Check - against origin/{default_branch}[/]")
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print()
 
     worktrees = list_worktrees(main_repo)
 
@@ -199,7 +195,7 @@ def check_rebase(fetch: bool = False) -> None:
             is_main=wt.is_main,
         )
 
-    console.print("[dim]Tip: Run with --fetch to update remote tracking first[/]")
+    out.print("[dim]Tip: Run with --fetch to update remote tracking first[/]")
 
 
 # Cyclopts App

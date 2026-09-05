@@ -7,8 +7,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..ui.console import error, info
 from .fuzzy import FuzzyItem, fuzzy_select
-from .terminal import error, info
 
 
 @dataclass

@@ -53,7 +53,7 @@ def _setup_file(worktree_path: Path, main_repo: Path, rel: str, *, copy: bool) -
     Returns:
         True if successful.
     """
-    from .terminal import warn
+    from ..ui.console import warn
 
     if Path(rel).is_absolute():
         warn(f"Skipping absolute path: {rel}")

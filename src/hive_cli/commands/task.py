@@ -8,14 +8,10 @@ from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
-from rich.console import Console
 
 from ..config import get_runtime_settings
 from ..git import get_main_repo, list_worktrees
-from ..utils import success, warn
-
-# Console for output
-console = Console()
+from ..ui.console import out, success, warn
 
 
 def _get_tasks_dir(main_repo: Path) -> Path:
@@ -61,20 +57,20 @@ def _show_task(agent_id: str, task_file: Path, no_worktree: bool = False) -> Non
         no_worktree: Whether agent has no worktree.
     """
     if agent_id == "1":
-        console.print("[bold cyan]Agent 1 (main)[/]")
+        out.print("[bold cyan]Agent 1 (main)[/]")
     elif no_worktree:
-        console.print(f"[bold yellow]{agent_id}[/] [dim](no worktree)[/]")
+        out.print(f"[bold yellow]{agent_id}[/] [dim](no worktree)[/]")
     else:
-        console.print(f"[bold magenta]Agent {agent_id}[/]")
+        out.print(f"[bold magenta]Agent {agent_id}[/]")
 
     if task_file.exists():
-        console.print("[dim]" + "─" * 41 + "[/]")
-        console.print(task_file.read_text())
-        console.print("[dim]" + "─" * 41 + "[/]")
+        out.print("[dim]" + "─" * 41 + "[/]")
+        out.print(task_file.read_text())
+        out.print("[dim]" + "─" * 41 + "[/]")
     else:
-        console.print("  [dim]No task assigned[/]")
+        out.print("  [dim]No task assigned[/]")
 
-    console.print()
+    out.print()
 
 
 def show_all_tasks() -> None:
@@ -82,10 +78,10 @@ def show_all_tasks() -> None:
     main_repo = get_main_repo()
     tasks_dir = _get_tasks_dir(main_repo)
 
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print("[bold cyan]  Agent Tasks[/]")
-    console.print("[bold cyan]" + "═" * 55 + "[/]")
-    console.print()
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print("[bold cyan]  Agent Tasks[/]")
+    out.print("[bold cyan]" + "═" * 55 + "[/]")
+    out.print()
 
     # Track which agents we've shown
     shown_agents: set[str] = set()

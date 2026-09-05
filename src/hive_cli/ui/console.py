@@ -7,6 +7,10 @@ from rich.console import Console
 # Create console for stderr output (public so other modules can use it)
 console = Console(stderr=True, highlight=False)
 
+# Shared consoles: command modules use these instead of creating their own.
+out = Console()
+err = Console(stderr=True)
+
 
 def print_stderr(msg: str) -> None:
     """Print message to stderr with Rich markup support."""

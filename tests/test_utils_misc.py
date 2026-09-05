@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hive_cli.config import reload_config
+from hive_cli.ui.tty import confirm, read_single_key
 from hive_cli.utils.agents import select_agent
 from hive_cli.utils.deps import (
     detect_package_manager,
@@ -24,7 +25,6 @@ from hive_cli.utils.deps import (
 )
 from hive_cli.utils.editors import EditorConfig, get_available_editors, open_in_editor
 from hive_cli.utils.fuzzy import FuzzyItem
-from hive_cli.utils.tty import confirm, read_single_key
 from hive_cli.utils.workdir import WORKDIR_CLEAR, select_workdir
 
 # ---------------------------------------------------------------------------
@@ -216,31 +216,31 @@ class TestEnsureMiseTrusted:
 
 class TestConfirm:
     def test_yes_returns_true(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="y"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="y"):
             assert confirm("Proceed?") is True
 
     def test_uppercase_yes_returns_true(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="Y"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="Y"):
             assert confirm("Proceed?") is True
 
     def test_no_returns_false(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="n"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="n"):
             assert confirm("Proceed?", default=True) is False
 
     def test_enter_uses_default_true(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="\r"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="\r"):
             assert confirm("Proceed?", default=True) is True
 
     def test_enter_uses_default_false(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="\n"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="\n"):
             assert confirm("Proceed?", default=False) is False
 
     def test_unrecognized_key_returns_false(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value="x"):
+        with patch("hive_cli.ui.tty.read_single_key", return_value="x"):
             assert confirm("Proceed?", default=True) is False
 
     def test_no_key_available_returns_false(self):
-        with patch("hive_cli.utils.tty.read_single_key", return_value=None):
+        with patch("hive_cli.ui.tty.read_single_key", return_value=None):
             assert confirm("Proceed?", default=True) is False
 
 
@@ -265,7 +265,7 @@ class TestReadSingleKey:
                 return fake_file
             raise AssertionError(f"unexpected open() call: {path}")
 
-        monkeypatch.setattr("hive_cli.utils.tty.open", fake_open, raising=False)
+        monkeypatch.setattr("hive_cli.ui.tty.open", fake_open, raising=False)
         with (
             patch("termios.tcgetattr", return_value="fake-settings"),
             patch("termios.tcsetattr"),
@@ -283,7 +283,7 @@ class TestReadSingleKey:
         def fake_open(path, *args, **kwargs):
             return fake_file
 
-        monkeypatch.setattr("hive_cli.utils.tty.open", fake_open, raising=False)
+        monkeypatch.setattr("hive_cli.ui.tty.open", fake_open, raising=False)
         with patch("termios.tcgetattr", side_effect=OSError("no tty attrs")):
             assert read_single_key() is None
 

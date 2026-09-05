@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import sys
+
 from rich.console import Console
 
 stderr_console = Console(stderr=True)
+
+
+def is_interactive() -> bool:
+    """Check if we're running in an interactive terminal.
+
+    Returns:
+        True if stdin is connected to a TTY.
+    """
+    return sys.stdin.isatty()
 
 
 def read_line_from_tty(
@@ -27,7 +38,7 @@ def read_line_from_tty(
         # Open /dev/tty directly to bypass any stdin redirection
         with open("/dev/tty") as tty:
             if prompt_text:
-                from .terminal import prompt
+                from .console import prompt
 
                 prompt(prompt_text)
             line = tty.readline()
@@ -73,7 +84,7 @@ def confirm(message: str, default: bool = False) -> bool:
     Returns:
         True if confirmed, False otherwise.
     """
-    from .terminal import prompt
+    from .console import prompt
 
     suffix = " [Y/n] " if default else " [y/N] "
     prompt(message + suffix)
