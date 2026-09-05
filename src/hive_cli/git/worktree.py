@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import load_config
+from ..core import proc
 from .repo import get_main_repo
 
 
@@ -221,21 +221,32 @@ def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
 
     worktrees = [WorktreeInfo(branch="main", path=main_repo, is_main=True)]
 
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(main_repo), "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
+    result = proc.run(
+        ["git", "-C", str(main_repo), "worktree", "list", "--porcelain"],
+        timeout=10,
+    )
+    if not result.ok:
         return worktrees
 
-    # Parse porcelain output
+    worktrees.extend(_parse_worktree_list(result.stdout, main_repo))
+    return worktrees
+
+
+def _parse_worktree_list(stdout: str, main_repo: Path) -> list[WorktreeInfo]:
+    """Parse `git worktree list --porcelain` output into WorktreeInfo entries.
+
+    Args:
+        stdout: Raw porcelain output.
+        main_repo: Path to main repository (excluded from the result).
+
+    Returns:
+        List of non-main WorktreeInfo objects.
+    """
+    entries: list[WorktreeInfo] = []
     worktree_path = ""
     worktree_branch = ""
 
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.startswith("worktree "):
             worktree_path = line[9:]  # Remove "worktree " prefix
         elif line.startswith("branch refs/heads/"):
@@ -244,7 +255,7 @@ def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
             # End of worktree entry
             wt_path = Path(worktree_path)
             if wt_path != main_repo and worktree_branch:
-                worktrees.append(
+                entries.append(
                     WorktreeInfo(branch=worktree_branch, path=wt_path, is_main=False)
                 )
             worktree_path = ""
@@ -254,11 +265,11 @@ def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
     if worktree_path and worktree_branch:
         wt_path = Path(worktree_path)
         if wt_path != main_repo:
-            worktrees.append(
+            entries.append(
                 WorktreeInfo(branch=worktree_branch, path=wt_path, is_main=False)
             )
 
-    return worktrees
+    return entries
 
 
 def worktree_exists(branch: str, main_repo: Path | None = None) -> bool:
@@ -292,16 +303,22 @@ def is_worktree_dirty(worktree_path: Path) -> bool:
     Returns:
         True if worktree has uncommitted changes.
     """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(worktree_path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return bool(result.stdout.strip())
-    except subprocess.CalledProcessError:
+    result = proc.run(
+        ["git", "-C", str(worktree_path), "status", "--porcelain"],
+        timeout=10,
+    )
+    if not result.ok:
         return False
+    return bool(result.stdout.strip())
+
+
+def _branch_ref_exists(main_repo: Path, ref: str) -> bool:
+    """Check whether a ref (e.g. refs/heads/main) exists in the repo."""
+    result = proc.run(
+        ["git", "-C", str(main_repo), "show-ref", "--verify", "--quiet", ref],
+        timeout=10,
+    )
+    return result.ok
 
 
 def get_default_branch(main_repo: Path) -> str:
@@ -314,61 +331,97 @@ def get_default_branch(main_repo: Path) -> str:
         Default branch name ("main" or "master").
     """
     # Check for main first
-    try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(main_repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                "refs/heads/main",
-            ],
-            check=True,
-            capture_output=True,
-        )
+    if _branch_ref_exists(main_repo, "refs/heads/main"):
         return "main"
-    except subprocess.CalledProcessError:
-        pass
 
     # Check for master
-    try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(main_repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                "refs/heads/master",
-            ],
-            check=True,
-            capture_output=True,
-        )
+    if _branch_ref_exists(main_repo, "refs/heads/master"):
         return "master"
-    except subprocess.CalledProcessError:
-        pass
 
     # Try to get from origin/HEAD
-    try:
-        result = subprocess.run(
+    result = proc.run(
+        ["git", "-C", str(main_repo), "symbolic-ref", "refs/remotes/origin/HEAD"],
+        timeout=10,
+    )
+    if not result.ok:
+        return "main"
+    # Output is like "refs/remotes/origin/main"
+    return result.stdout.strip().split("/")[-1]
+
+
+def _create_worktree_for_new_branch(
+    main_repo: Path, worktree_path: Path, branch: str
+) -> None:
+    """Create a worktree with a brand-new branch, from origin or local default.
+
+    Args:
+        main_repo: Path to main repository.
+        worktree_path: Where to create the worktree.
+        branch: Name of the new branch.
+    """
+    default_branch = get_default_branch(main_repo)
+
+    # Try fetching from origin first
+    proc.run(
+        ["git", "-C", str(main_repo), "fetch", "origin", default_branch],
+        timeout=60,
+    )
+
+    result = proc.run(
+        [
+            "git",
+            "-C",
+            str(main_repo),
+            "worktree",
+            "add",
+            str(worktree_path),
+            "-b",
+            branch,
+            f"origin/{default_branch}",
+        ],
+        timeout=30,
+    )
+    if not result.ok:
+        # Fallback to local default branch
+        proc.run(
             [
                 "git",
                 "-C",
                 str(main_repo),
-                "symbolic-ref",
-                "refs/remotes/origin/HEAD",
+                "worktree",
+                "add",
+                str(worktree_path),
+                "-b",
+                branch,
+                default_branch,
             ],
-            capture_output=True,
-            text=True,
+            timeout=30,
             check=True,
         )
-        # Output is like "refs/remotes/origin/main"
-        return result.stdout.strip().split("/")[-1]
-    except subprocess.CalledProcessError:
-        return "main"
+
+    # Set up remote tracking
+    proc.run(
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "config",
+            f"branch.{branch}.remote",
+            "origin",
+        ],
+        timeout=10,
+    )
+    proc.run(
+        [
+            "git",
+            "-C",
+            str(worktree_path),
+            "config",
+            f"branch.{branch}.merge",
+            f"refs/heads/{branch}",
+        ],
+        timeout=10,
+    )
 
 
 def create_worktree(branch: str, main_repo: Path | None = None) -> Path:
@@ -409,49 +462,14 @@ def create_worktree(branch: str, main_repo: Path | None = None) -> Path:
     # Ensure parent directory exists
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Check if branch exists locally
-    local_branch_exists = False
-    try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(main_repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                f"refs/heads/{branch}",
-            ],
-            check=True,
-            capture_output=True,
-        )
-        local_branch_exists = True
-    except subprocess.CalledProcessError:
-        pass
-
-    # Check if branch exists on remote
-    remote_branch_exists = False
-    try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(main_repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                f"refs/remotes/origin/{branch}",
-            ],
-            check=True,
-            capture_output=True,
-        )
-        remote_branch_exists = True
-    except subprocess.CalledProcessError:
-        pass
+    local_branch_exists = _branch_ref_exists(main_repo, f"refs/heads/{branch}")
+    remote_branch_exists = _branch_ref_exists(
+        main_repo, f"refs/remotes/origin/{branch}"
+    )
 
     if local_branch_exists:
         # Use existing local branch
-        subprocess.run(
+        proc.run(
             [
                 "git",
                 "-C",
@@ -461,12 +479,12 @@ def create_worktree(branch: str, main_repo: Path | None = None) -> Path:
                 str(worktree_path),
                 branch,
             ],
+            timeout=30,
             check=True,
-            capture_output=True,
         )
     elif remote_branch_exists:
         # Create from remote branch
-        subprocess.run(
+        proc.run(
             [
                 "git",
                 "-C",
@@ -478,76 +496,11 @@ def create_worktree(branch: str, main_repo: Path | None = None) -> Path:
                 branch,
                 f"origin/{branch}",
             ],
+            timeout=30,
             check=True,
-            capture_output=True,
         )
     else:
-        # Create new branch from default
-        default_branch = get_default_branch(main_repo)
-
-        # Try fetching from origin first
-        subprocess.run(
-            ["git", "-C", str(main_repo), "fetch", "origin", default_branch],
-            capture_output=True,
-        )
-
-        try:
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(main_repo),
-                    "worktree",
-                    "add",
-                    str(worktree_path),
-                    "-b",
-                    branch,
-                    f"origin/{default_branch}",
-                ],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError:
-            # Fallback to local default branch
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(main_repo),
-                    "worktree",
-                    "add",
-                    str(worktree_path),
-                    "-b",
-                    branch,
-                    default_branch,
-                ],
-                check=True,
-                capture_output=True,
-            )
-
-        # Set up remote tracking
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(worktree_path),
-                "config",
-                f"branch.{branch}.remote",
-                "origin",
-            ],
-            capture_output=True,
-        )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(worktree_path),
-                "config",
-                f"branch.{branch}.merge",
-                f"refs/heads/{branch}",
-            ],
-            capture_output=True,
-        )
+        _create_worktree_for_new_branch(main_repo, worktree_path, branch)
 
     # Setup handoff symlink for the worktree
     from ..handoffs import setup_handoff_symlink
@@ -566,17 +519,14 @@ def get_current_branch(repo_path: Path) -> str | None:
     Returns:
         Branch name, or None if detached HEAD.
     """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo_path), "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        branch = result.stdout.strip()
-        return branch if branch else None
-    except subprocess.CalledProcessError:
+    result = proc.run(
+        ["git", "-C", str(repo_path), "branch", "--show-current"],
+        timeout=10,
+    )
+    if not result.ok:
         return None
+    branch = result.stdout.strip()
+    return branch if branch else None
 
 
 def get_all_branches(main_repo: Path | None = None) -> list[str]:
@@ -591,21 +541,18 @@ def get_all_branches(main_repo: Path | None = None) -> list[str]:
     if main_repo is None:
         main_repo = get_main_repo()
 
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(main_repo),
-                "branch",
-                "-a",
-                "--format=%(refname:short)",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
+    result = proc.run(
+        [
+            "git",
+            "-C",
+            str(main_repo),
+            "branch",
+            "-a",
+            "--format=%(refname:short)",
+        ],
+        timeout=10,
+    )
+    if not result.ok:
         return []
 
     branches = set()
@@ -636,15 +583,8 @@ def fetch_origin(main_repo: Path | None = None) -> bool:
     if main_repo is None:
         main_repo = get_main_repo()
 
-    try:
-        subprocess.run(
-            ["git", "-C", str(main_repo), "fetch", "origin"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    result = proc.run(["git", "-C", str(main_repo), "fetch", "origin"], timeout=60)
+    return result.ok
 
 
 def delete_worktree(worktree_path: Path, force: bool = False) -> None:
@@ -656,24 +596,23 @@ def delete_worktree(worktree_path: Path, force: bool = False) -> None:
 
     Raises:
         ValueError: If worktree is dirty and force is False.
-        subprocess.CalledProcessError: If git operation fails.
+        core.errors.ProcError: If git operation fails.
     """
     if not force and is_worktree_dirty(worktree_path):
         raise ValueError("Worktree has uncommitted changes. Use force=True to delete.")
 
     main_repo = get_main_repo()
 
-    try:
-        cmd = ["git", "-C", str(main_repo), "worktree", "remove", str(worktree_path)]
-        if force:
-            cmd.append("--force")
-        subprocess.run(cmd, check=True, capture_output=True)
-    except subprocess.CalledProcessError:
+    cmd = ["git", "-C", str(main_repo), "worktree", "remove", str(worktree_path)]
+    if force:
+        cmd.append("--force")
+    result = proc.run(cmd, timeout=30)
+    if not result.ok:
         # Fallback: remove directory and prune
         import shutil
 
         shutil.rmtree(worktree_path, ignore_errors=True)
-        subprocess.run(
+        proc.run(
             ["git", "-C", str(main_repo), "worktree", "prune"],
-            capture_output=True,
+            timeout=30,
         )
