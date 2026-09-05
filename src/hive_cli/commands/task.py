@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -11,41 +10,8 @@ from cyclopts import App, Parameter
 
 from ..config import get_runtime_settings
 from ..git import get_main_repo, list_worktrees
+from ..services import tasks
 from ..ui.console import out, success, warn
-
-
-def _get_tasks_dir(main_repo: Path) -> Path:
-    """Get the tasks directory path.
-
-    Args:
-        main_repo: Path to main repository.
-
-    Returns:
-        Path to tasks directory.
-    """
-    return main_repo / ".claude" / "local-agents" / "tasks"
-
-
-def _get_task_file(main_repo: Path, agent_id: str) -> Path:
-    """Get task file path for an agent.
-
-    Args:
-        main_repo: Path to main repository.
-        agent_id: Agent identifier.
-
-    Returns:
-        Path to task file.
-    """
-    return _get_tasks_dir(main_repo) / f"agent-{agent_id}.md"
-
-
-def _ensure_tasks_dir(main_repo: Path) -> None:
-    """Ensure tasks directory exists.
-
-    Args:
-        main_repo: Path to main repository.
-    """
-    _get_tasks_dir(main_repo).mkdir(parents=True, exist_ok=True)
 
 
 def _show_task(agent_id: str, task_file: Path, no_worktree: bool = False) -> None:
@@ -76,7 +42,7 @@ def _show_task(agent_id: str, task_file: Path, no_worktree: bool = False) -> Non
 def show_all_tasks() -> None:
     """Display all agent tasks."""
     main_repo = get_main_repo()
-    tasks_dir = _get_tasks_dir(main_repo)
+    tasks_dir = tasks.get_tasks_dir(main_repo)
 
     out.print("[bold cyan]" + "═" * 55 + "[/]")
     out.print("[bold cyan]  Agent Tasks[/]")
@@ -87,7 +53,7 @@ def show_all_tasks() -> None:
     shown_agents: set[str] = set()
 
     # Show task for Agent 1 (main)
-    task_file = _get_task_file(main_repo, "1")
+    task_file = tasks.get_task_file(main_repo, "1")
     _show_task("1", task_file)
     shown_agents.add("1")
     shown_agents.add("main")  # Also exclude main
@@ -97,7 +63,7 @@ def show_all_tasks() -> None:
     for wt in worktrees:
         if wt.is_main:
             continue
-        task_file = _get_task_file(main_repo, wt.branch)
+        task_file = tasks.get_task_file(main_repo, wt.branch)
         _show_task(wt.branch, task_file)
         shown_agents.add(wt.branch)
 
@@ -121,7 +87,7 @@ def show_task(agent_id: str) -> None:
         agent_id: Agent identifier.
     """
     main_repo = get_main_repo()
-    task_file = _get_task_file(main_repo, agent_id)
+    task_file = tasks.get_task_file(main_repo, agent_id)
     _show_task(agent_id, task_file)
 
 
@@ -132,20 +98,7 @@ def set_task(agent_id: str, task_content: str) -> None:
         agent_id: Agent identifier.
         task_content: Task description.
     """
-    main_repo = get_main_repo()
-    _ensure_tasks_dir(main_repo)
-
-    task_file = _get_task_file(main_repo, agent_id)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    content = f"""# Agent {agent_id} Task
-
-{task_content}
-
----
-*Assigned: {timestamp}*
-"""
-    task_file.write_text(content)
+    tasks.write_task(get_main_repo(), agent_id, task_content)
     success(f"Task set for Agent {agent_id}")
 
 
@@ -155,30 +108,7 @@ def edit_task(agent_id: str) -> None:
     Args:
         agent_id: Agent identifier.
     """
-    main_repo = get_main_repo()
-    _ensure_tasks_dir(main_repo)
-
-    task_file = _get_task_file(main_repo, agent_id)
-
-    # Create template if doesn't exist
-    if not task_file.exists():
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        template = f"""# Agent {agent_id} Task
-
-[Describe the task here]
-
-## Acceptance Criteria
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Notes
-
----
-*Assigned: {timestamp}*
-"""
-        task_file.write_text(template)
-
+    task_file = tasks.ensure_task_template(get_main_repo(), agent_id)
     editor = get_runtime_settings().editor
     subprocess.run([editor, str(task_file)])
 
@@ -189,11 +119,7 @@ def clear_task(agent_id: str) -> None:
     Args:
         agent_id: Agent identifier.
     """
-    main_repo = get_main_repo()
-    task_file = _get_task_file(main_repo, agent_id)
-
-    if task_file.exists():
-        task_file.unlink()
+    if tasks.delete_task(get_main_repo(), agent_id):
         success(f"Task cleared for Agent {agent_id}")
     else:
         warn(f"No task to clear for Agent {agent_id}")
