@@ -118,7 +118,9 @@ def _show_worktree_diff(
     if files_only or stat:
         diff_output = _get_diff(path, default_branch, stat=stat, files_only=files_only)
         if diff_output:
-            console.print(diff_output)
+            # Raw git output: never parse it as Rich markup, or `list[str]`
+            # and `[text](url)` in the diff are silently swallowed.
+            console.print(diff_output, markup=False)
         else:
             console.print("  [dim](no changes)[/]")
     else:
@@ -129,7 +131,7 @@ def _show_worktree_diff(
         else:
             diff_output = _get_diff(path, default_branch)
             if diff_output:
-                console.print(diff_output)
+                console.print(diff_output, markup=False)
             else:
                 console.print("  [dim](no changes)[/]")
 
