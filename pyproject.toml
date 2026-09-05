@@ -19,7 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-dependencies = [ "cyclopts>=3", "prompt-toolkit>=3", "pydantic>=2", "pydantic-settings>=2", "pyyaml>=6", "rich>=13" ]
+dependencies = [ "cyclopts>=4.22", "prompt-toolkit>=3", "pydantic>=2", "pydantic-settings>=2", "pyyaml>=6", "rich>=13" ]
 
 [project.scripts]
 hive = "hive_cli.app:app"
@@ -28,6 +28,8 @@ hive = "hive_cli.app:app"
 dev = [
   "pytest>=7",
   "pytest-mock>=3",
+  "pytest-timeout>=2",
+  "pytest-cov>=5",
   # Three segments on purpose: a two-segment ~=0.16 would only cap at <1.0, and
   # pre-1.0 ruff minors promote lint rules and change formatter style. Keep this
   # minor in lockstep with the ruff-pre-commit `rev` in .pre-commit-config.yaml,
@@ -60,6 +62,7 @@ lint.select = [ "E", "F", "I", "UP" ]
 [tool.pytest.ini_options]
 testpaths = [ "tests" ]
 pythonpath = [ "src" ]
+timeout = 20
 
 [tool.semantic_release]
 commit_parser = "conventional"

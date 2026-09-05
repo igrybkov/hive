@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -67,8 +69,16 @@ class CycloptsTestRunner:
         return Result(exit_code=exit_code, output=output, exception=exception)
 
 
+@pytest.fixture
+def short_tmp():
+    """A short temp path: Unix socket paths must stay under 104 bytes on macOS."""
+    path = Path(tempfile.mkdtemp(prefix="hv", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
-def clean_environment(tmp_path, monkeypatch):
+def clean_environment(tmp_path, short_tmp, monkeypatch):
     """Clean environment for all tests.
 
     Sets XDG_CONFIG_HOME to an empty temp dir to avoid picking up
@@ -79,6 +89,19 @@ def clean_environment(tmp_path, monkeypatch):
     xdg_dir = tmp_path / "xdg_config"
     xdg_dir.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_tmp))
+    for var in (
+        "HIVE_PANE_LABEL",
+        "HIVE_PANE_SOCK",
+        "HIVE_TRACE",
+        "HIVE_MUX_BACKEND",
+        "ZELLIJ_PANE_ID",
+        "ZELLIJ_SESSION_NAME",
+        "TMUX",
+        "TMUX_PANE",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
     # Clear HIVE_PANE_ID to ensure consistent agent_num=0
     monkeypatch.delenv("HIVE_PANE_ID", raising=False)
