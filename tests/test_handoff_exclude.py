@@ -6,7 +6,11 @@ from pathlib import Path
 
 from conftest import git
 
-from hive_cli.handoffs import HANDOFF_SYMLINK, _exclude_from_git, setup_handoff_symlink
+from hive_cli.services.handoffs import (
+    HANDOFF_SYMLINK,
+    _exclude_from_git,
+    setup_handoff_symlink,
+)
 
 
 def _exclude_file(worktree: Path) -> Path:
