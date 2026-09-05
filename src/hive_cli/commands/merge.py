@@ -25,6 +25,11 @@ from ..utils import error
 console = Console()
 
 
+# Files hive itself places into every worktree (see handoffs.setup_handoff_symlink).
+# They end up committed by `git add -A` and would be reported as a false overlap.
+HIVE_MANAGED_FILES = frozenset({".claude/HANDOFF.md"})
+
+
 def _get_changed_files(path: Path, default_branch: str) -> list[str]:
     """Get files changed compared to default branch.
 
@@ -33,7 +38,7 @@ def _get_changed_files(path: Path, default_branch: str) -> list[str]:
         default_branch: Default branch name.
 
     Returns:
-        List of changed file names.
+        List of changed file names, excluding files managed by hive itself.
     """
     try:
         result = subprocess.run(
@@ -42,7 +47,11 @@ def _get_changed_files(path: Path, default_branch: str) -> list[str]:
             text=True,
             check=True,
         )
-        return [f for f in result.stdout.strip().splitlines() if f]
+        return [
+            f
+            for f in result.stdout.strip().splitlines()
+            if f and f not in HIVE_MANAGED_FILES
+        ]
     except subprocess.CalledProcessError:
         return []
 

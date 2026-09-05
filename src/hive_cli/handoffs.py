@@ -7,9 +7,13 @@ and symlinked into worktrees for easy access.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 from .git import get_main_repo, sanitize_branch_name
+
+# Path of the handoff symlink inside a worktree, relative to its root.
+HANDOFF_SYMLINK = ".claude/HANDOFF.md"
 
 
 def get_handoffs_dir(main_repo: Path | None = None) -> Path:
@@ -102,7 +106,57 @@ def setup_handoff_symlink(worktree_path: Path, branch: str, main_repo: Path) -> 
         # On Windows or cross-device, fall back to absolute path
         symlink_path.symlink_to(handoff_file)
 
+    # The symlink is hive's, not the project's: keep `git add -A` from staging it.
+    _exclude_from_git(worktree_path, HANDOFF_SYMLINK)
+
     return handoff_file
+
+
+def _exclude_from_git(worktree_path: Path, rel_path: str) -> None:
+    """Add ``rel_path`` to the repository's ``info/exclude`` file.
+
+    ``git rev-parse --git-path info/exclude`` resolves to the shared exclude
+    file in the common git dir even inside a linked worktree, so the entry
+    applies to every worktree of the repository (which is what we want: the
+    symlink is hive's in all of them). Idempotent; silently does nothing when
+    git is unavailable or the file cannot be written.
+
+    Args:
+        worktree_path: Path to the worktree.
+        rel_path: Path to exclude, relative to the worktree root.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree_path),
+                "rev-parse",
+                "--git-path",
+                "info/exclude",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return
+
+    exclude = Path(result.stdout.strip())
+    if not exclude.is_absolute():
+        exclude = worktree_path / exclude
+
+    try:
+        existing = exclude.read_text() if exclude.exists() else ""
+        if rel_path in existing.splitlines():
+            return
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(f"{rel_path}\n")
+    except OSError:
+        return
 
 
 def list_handoffs(main_repo: Path | None = None) -> list[tuple[str, Path]]:
