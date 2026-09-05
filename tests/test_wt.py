@@ -129,8 +129,10 @@ class TestWtCreateCommand:
         result = cli_runner.invoke(app, ["wt", "create", "main"])
         assert result.exit_code == 1
 
-    def test_create_new_branch(self, cli_runner: CycloptsTestRunner, temp_git_repo):
-        """Test create new branch worktree."""
+    def test_create_new_branch(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, isolated_worktrees
+    ):
+        """Test create new branch worktree (isolated so no ~/.worktrees leftovers)."""
         result = cli_runner.invoke(
             app, ["wt", "create", "test-feature", "--no-install"]
         )

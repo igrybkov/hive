@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -100,6 +102,18 @@ def clean_environment(tmp_path, monkeypatch):
     monkeypatch.delenv("HIVE_GITHUB_FETCH_ISSUES", raising=False)
     monkeypatch.delenv("HIVE_GITHUB_ISSUE_LIMIT", raising=False)
 
+    # Isolate git from the developer's global config (commit signing, hooks,
+    # default branch name). Worktree placement is opt-in: see isolated_worktrees.
+    git_config = tmp_path / "gitconfig"
+    git_config.write_text(
+        "[user]\n\tname = Test User\n\temail = test@example.com\n"
+        "[commit]\n\tgpgsign = false\n"
+        "[init]\n\tdefaultBranch = main\n"
+        "[advice]\n\tdetachedHead = false\n"
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(git_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
     # Reset settings singletons and eagerly repopulate.
     # Eagerly creating settings ensures find_git_root() subprocess call
     # happens here (outside test mock contexts), not during the test.
@@ -157,3 +171,81 @@ def temp_git_repo(tmp_path, monkeypatch):
     monkeypatch.chdir(repo_path)
 
     return repo_path
+
+
+# ---------------------------------------------------------------------------
+# Git helpers for integration tests (real repositories, no mocks)
+# ---------------------------------------------------------------------------
+
+
+def git(*args: str, cwd: Path) -> str:
+    """Run git in ``cwd`` and return stripped stdout. Raises on failure."""
+    result = subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def commit_file(repo: Path, name: str, content: str, message: str | None = None) -> str:
+    """Write ``name`` with ``content`` inside ``repo``, commit it, return short hash."""
+    path = repo / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", message or f"update {name}", cwd=repo)
+    return git("rev-parse", "--short", "HEAD", cwd=repo)
+
+
+@pytest.fixture
+def repo_with_origin(temp_git_repo: Path, tmp_path: Path) -> Path:
+    """``temp_git_repo`` with a bare ``origin`` remote that already has ``main``.
+
+    ``main`` tracks ``origin/main`` so ahead/behind, fetch and remote-branch
+    code paths can be exercised without any network access.
+    """
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "clone", "--bare", "-q", str(temp_git_repo), str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    git("remote", "add", "origin", str(origin), cwd=temp_git_repo)
+    git("fetch", "-q", "origin", cwd=temp_git_repo)
+    git("branch", "--set-upstream-to=origin/main", "main", cwd=temp_git_repo)
+    return temp_git_repo
+
+
+@pytest.fixture
+def isolated_worktrees(tmp_path: Path, monkeypatch):
+    """Place worktrees created by tests under the test's temp dir, never ~/.worktrees.
+
+    Opt-in because several config/path tests assert the default template.
+    Yields the base directory.
+    """
+    from hive_cli.config import reset_settings
+
+    monkeypatch.setenv(
+        "HIVE_WORKTREES_PARENT_DIR",
+        str(tmp_path / ".worktrees" / "{repo}" / "{branch}"),
+    )
+    reset_settings()
+    yield tmp_path / ".worktrees"
+    reset_settings()
+
+
+@pytest.fixture
+def make_worktree(temp_git_repo: Path, isolated_worktrees: Path):
+    """Factory: ``make_worktree("feat")`` creates a real worktree and returns its path.
+
+    Uses hive's own ``create_worktree`` so handoff symlinks and path templates
+    behave exactly as in production. The branch is created from ``main``.
+    """
+    from hive_cli.git import create_worktree
+
+    def _make(branch: str) -> Path:
+        return create_worktree(branch, temp_git_repo)
+
+    return _make
