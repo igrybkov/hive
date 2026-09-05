@@ -128,7 +128,8 @@ def _preview_agent_merge(agent_id: str, main_repo: Path) -> bool:
 
     sim = simulate_merge(path, main_repo, default_branch, progress=out.print)
     if not sim.ok:
-        error(sim.error or "Merge simulation failed")
+        assert sim.error is not None  # every ok=False construction sets it
+        error(sim.error)
         return False
 
     return _print_merge_result(sim)
