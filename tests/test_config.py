@@ -9,6 +9,7 @@ from conftest import git
 from hive_cli.config import (
     KNOWN_AGENTS,
     AgentConfig,
+    AgentProfileConfig,
     deep_merge,
     find_config_files,
     find_global_config,
@@ -379,6 +380,45 @@ class TestAgentConfig:
         # Claude should have --continue from default.yml
         assert config.agents.configs.get("claude") is not None
         assert config.agents.configs["claude"].resume_args == ["--continue"]
+
+
+class TestAgentProfileConfig:
+    """Tests for the AgentProfileConfig schema model."""
+
+    def test_defaults_are_empty(self):
+        """AgentProfileConfig defaults: no config_dir_env, empty dicts."""
+        cfg = AgentProfileConfig()
+        assert cfg.config_dir_env is None
+        assert cfg.extra_env == {}
+        assert cfg.seed_files == {}
+
+    def test_config_dir_env_set(self):
+        cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
+        assert cfg.config_dir_env == "CLAUDE_CONFIG_DIR"
+
+    def test_extra_env_set(self):
+        cfg = AgentProfileConfig(extra_env={"GEMINI_FORCE_FILE_STORAGE": "true"})
+        assert cfg.extra_env == {"GEMINI_FORCE_FILE_STORAGE": "true"}
+
+    def test_seed_files_set(self):
+        cfg = AgentProfileConfig(seed_files={"config.toml": 'key = "value"\n'})
+        assert cfg.seed_files == {"config.toml": 'key = "value"\n'}
+
+
+class TestAgentConfigProfileField:
+    """Tests for profile field on AgentConfig."""
+
+    def test_profile_defaults_to_none(self):
+        cfg = AgentConfig()
+        assert cfg.profile is None
+
+    def test_profile_can_be_set(self):
+        profile_cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
+        cfg = AgentConfig(
+            resume_args=[], skip_permissions_args=[], extra_args=[], profile=profile_cfg
+        )
+        assert cfg.profile is not None
+        assert cfg.profile.config_dir_env == "CLAUDE_CONFIG_DIR"
 
 
 class TestPostCreateCommands:

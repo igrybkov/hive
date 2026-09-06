@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..config import get_agent_config, get_settings
-from ..git import expand_path, get_main_repo
+from ...config import get_agent_config, get_settings
+from ...git import expand_path, get_main_repo
 from .fuzzy import FuzzyItem, fuzzy_select
 
 # Sentinel returned when the user explicitly selects "Default (no override)".
@@ -22,7 +22,7 @@ def select_workdir(
     The outer picker decides the "primary" path (main repo or a worktree).
     This sub-picker lets the user swap that primary with one of the extra
     directories configured in `extra_dirs`. The displaced primary is added
-    to the extras list at launch time (in exec_runner).
+    to the extras list at launch time (in services/pane.py).
 
     Args:
         current_agent: Active agent name, used to warn if the agent has no

@@ -1,13 +1,17 @@
-"""Profile selection utilities for per-agent config-dir profiles."""
+"""Interactive picker for per-agent config-dir profiles.
+
+Moved from utils/profiles.py (A0 step 9). create_profile/list_profiles moved
+to agents/profiles.py alongside get_profiles_root/resolve_profile_env.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
 
 from rich.console import Console
 
-from ..agents.profiles import get_profiles_root
-from ..config import get_agent_config
+from ...agents.profiles import create_profile, list_profiles
+from ...config import get_agent_config
 from .fuzzy import FuzzyItem, fuzzy_select
 
 # Sentinel value returned from select_profile when user creates a new profile
@@ -19,57 +23,6 @@ DEFAULT_PROFILE_DISPLAY = "<default>"
 DEFAULT_PROFILE_VALUE = ""
 
 stderr_console = Console(stderr=True)
-
-
-def _seed_profile_dir(profile_dir: Path, seed_files: dict[str, str]) -> None:
-    """Write seed files into a freshly created profile directory.
-
-    Each file is only written if it does not already exist, so re-entering a
-    profile creation flow never clobbers user edits.
-
-    Args:
-        profile_dir: Path to the profile directory (must already exist).
-        seed_files: Mapping of filename → file contents.
-    """
-    for filename, contents in seed_files.items():
-        target = profile_dir / filename
-        if not target.exists():
-            target.write_text(contents)
-
-
-def create_profile(agent_name: str, profile_name: str) -> Path:
-    """Create a new profile directory and write seed files.
-
-    Args:
-        agent_name: Name of the agent (e.g. ``"claude"``).
-        profile_name: Name of the new profile.
-
-    Returns:
-        Path to the created profile directory.
-    """
-    profile_dir = get_profiles_root() / agent_name / profile_name
-    profile_dir.mkdir(parents=True, exist_ok=True)
-
-    cfg = get_agent_config(agent_name)
-    if cfg.profile and cfg.profile.seed_files:
-        _seed_profile_dir(profile_dir, cfg.profile.seed_files)
-
-    return profile_dir
-
-
-def list_profiles(agent_name: str) -> list[str]:
-    """Return existing profile names for an agent (alphabetically sorted).
-
-    Args:
-        agent_name: Name of the agent.
-
-    Returns:
-        Sorted list of profile names (directory names under the profiles root).
-    """
-    root = get_profiles_root() / agent_name
-    if not root.exists():
-        return []
-    return sorted(d.name for d in root.iterdir() if d.is_dir())
 
 
 def select_profile(
@@ -186,8 +139,6 @@ def _prompt_new_profile(agent_name: str) -> str | None:
         return None
 
     # Basic validation: allow alphanumeric, hyphens, underscores
-    import re
-
     if not re.match(r"^[a-zA-Z0-9_-]+$", name):
         stderr_console.print(
             "[red]Invalid profile name. Use only letters, numbers, hyphens, "

@@ -1,10 +1,10 @@
-"""Agent selection utilities."""
+"""Agent selection picker."""
 
 from __future__ import annotations
 
 import threading
 
-from ..agents import get_available_agents
+from ...agents import get_available_agents
 from .fuzzy import FuzzyItem, fuzzy_select
 
 

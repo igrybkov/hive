@@ -41,17 +41,14 @@ from ...git import (
     is_worktree_dirty,
     list_worktrees,
 )
-from ...utils import (
-    WORKDIR_CLEAR,
-    open_in_editor,
-    select_agent,
-    select_editor,
-    select_workdir,
-)
-from ...utils.profiles import select_profile
+from ...services import editors
 from ..console import error, warn
 from ..flows import worktrees as flows
+from .agents import select_agent
+from .editors import select_editor
 from .fuzzy import FuzzyItem, fuzzy_select
+from .profiles import select_profile
+from .workdir import WORKDIR_CLEAR, select_workdir
 from .worktree_items import (
     ACTION_CHANGE_AGENT,
     ACTION_CHANGE_PROFILE,
@@ -218,7 +215,7 @@ def _handle_open_in_editor(
     if editor is None:
         return
 
-    open_in_editor(worktree_path, editor)
+    editors.open_in_editor(worktree_path, editor)
     state.preselect_branch = branch_to_open
 
 

@@ -1,67 +1,17 @@
-"""Tests for per-agent config-dir profile utilities."""
+"""Tests for hive_cli.agents.profiles: profile root, env resolution, CRUD."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-from hive_cli.agents.profiles import get_profiles_root, resolve_profile_env
-from hive_cli.config import (
-    AgentConfig,
-    AgentProfileConfig,
-    reset_settings,
-)
-from hive_cli.utils.profiles import (
-    DEFAULT_PROFILE_VALUE,
-    NEW_PROFILE_ITEM_VALUE,
+from hive_cli.agents.profiles import (
     create_profile,
+    get_profiles_root,
     list_profiles,
-    select_profile,
+    resolve_profile_env,
 )
-
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
-
-class TestAgentProfileConfig:
-    """Tests for the AgentProfileConfig schema model."""
-
-    def test_defaults_are_empty(self):
-        """AgentProfileConfig defaults: no config_dir_env, empty dicts."""
-        cfg = AgentProfileConfig()
-        assert cfg.config_dir_env is None
-        assert cfg.extra_env == {}
-        assert cfg.seed_files == {}
-
-    def test_config_dir_env_set(self):
-        cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
-        assert cfg.config_dir_env == "CLAUDE_CONFIG_DIR"
-
-    def test_extra_env_set(self):
-        cfg = AgentProfileConfig(extra_env={"GEMINI_FORCE_FILE_STORAGE": "true"})
-        assert cfg.extra_env == {"GEMINI_FORCE_FILE_STORAGE": "true"}
-
-    def test_seed_files_set(self):
-        cfg = AgentProfileConfig(seed_files={"config.toml": 'key = "value"\n'})
-        assert cfg.seed_files == {"config.toml": 'key = "value"\n'}
-
-
-class TestAgentConfigProfileField:
-    """Tests for profile field on AgentConfig."""
-
-    def test_profile_defaults_to_none(self):
-        cfg = AgentConfig()
-        assert cfg.profile is None
-
-    def test_profile_can_be_set(self):
-        profile_cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
-        cfg = AgentConfig(
-            resume_args=[], skip_permissions_args=[], extra_args=[], profile=profile_cfg
-        )
-        assert cfg.profile is not None
-        assert cfg.profile.config_dir_env == "CLAUDE_CONFIG_DIR"
-
+from hive_cli.config import reset_settings
 
 # ---------------------------------------------------------------------------
 # get_profiles_root
@@ -270,104 +220,3 @@ class TestListProfiles:
         with patch("hive_cli.config.loader.find_config_files", return_value=[]):
             result = list_profiles("claude")
         assert result == ["work"]
-
-
-# ---------------------------------------------------------------------------
-# select_profile
-# ---------------------------------------------------------------------------
-
-
-class TestSelectProfile:
-    """Tests for select_profile() picker function."""
-
-    def setup_method(self):
-        reset_settings()
-
-    def teardown_method(self):
-        reset_settings()
-
-    def test_unsupported_agent_returns_none_and_warns(
-        self, monkeypatch, tmp_path, capsys
-    ):
-        """Unknown agent prints warning and returns None."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
-            result = select_profile("unknown-agent")
-        assert result is None
-
-    def test_returns_none_on_cancel(self, monkeypatch, tmp_path):
-        """Cancelled picker (fuzzy_select returns None) → None."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.utils.profiles.fuzzy_select", return_value=None),
-        ):
-            result = select_profile("claude")
-        assert result is None
-
-    def test_returns_empty_string_for_default(self, monkeypatch, tmp_path):
-        """Selecting <default> returns empty string (passthrough)."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch(
-                "hive_cli.utils.profiles.fuzzy_select",
-                return_value=DEFAULT_PROFILE_VALUE,
-            ),
-        ):
-            result = select_profile("claude")
-        assert result == ""
-
-    def test_returns_profile_name_when_selected(self, monkeypatch, tmp_path):
-        """Selecting an existing profile returns its name."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        (tmp_path / "hive" / "profiles" / "claude" / "work").mkdir(parents=True)
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.utils.profiles.fuzzy_select", return_value="work"),
-        ):
-            result = select_profile("claude", current_profile="work")
-        assert result == "work"
-
-    def test_new_profile_flow(self, monkeypatch, tmp_path):
-        """Selecting ＋ new profile… triggers creation and returns the new name."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch(
-                "hive_cli.utils.profiles.fuzzy_select",
-                return_value=NEW_PROFILE_ITEM_VALUE,
-            ),
-            patch("builtins.input", return_value="personal"),
-        ):
-            result = select_profile("claude")
-        assert result == "personal"
-        assert (tmp_path / "hive" / "profiles" / "claude" / "personal").is_dir()
-
-    def test_new_profile_invalid_name_returns_none(self, monkeypatch, tmp_path):
-        """Invalid profile name (special chars) returns None."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch(
-                "hive_cli.utils.profiles.fuzzy_select",
-                return_value=NEW_PROFILE_ITEM_VALUE,
-            ),
-            patch("builtins.input", return_value="my profile!"),
-        ):
-            result = select_profile("claude")
-        assert result is None
-
-    def test_new_profile_empty_name_returns_none(self, monkeypatch, tmp_path):
-        """Empty profile name (cancel) returns None."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        with (
-            patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch(
-                "hive_cli.utils.profiles.fuzzy_select",
-                return_value=NEW_PROFILE_ITEM_VALUE,
-            ),
-            patch("builtins.input", return_value=""),
-        ):
-            result = select_profile("claude")
-        assert result is None

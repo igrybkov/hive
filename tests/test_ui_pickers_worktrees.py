@@ -65,7 +65,7 @@ class TestHandleOpenInEditor:
                 return_value=worktree_path,
             ),
             patch("hive_cli.ui.pickers.worktrees.select_editor", return_value="code"),
-            patch("hive_cli.ui.pickers.worktrees.open_in_editor") as mock_open,
+            patch("hive_cli.services.editors.open_in_editor") as mock_open,
         ):
             _handle_open_in_editor("__open_in_editor__:feature-x", main_repo, 1, state)
 
@@ -87,7 +87,7 @@ class TestHandleOpenInEditor:
                 return_value=worktree_path,
             ),
             patch("hive_cli.ui.pickers.worktrees.select_editor", return_value=None),
-            patch("hive_cli.ui.pickers.worktrees.open_in_editor") as mock_open,
+            patch("hive_cli.services.editors.open_in_editor") as mock_open,
         ):
             _handle_open_in_editor("__open_in_editor__:feature-x", main_repo, 1, state)
 

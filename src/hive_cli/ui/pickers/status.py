@@ -22,11 +22,11 @@ from ...services import editors
 from ...services import status as service_status
 from ...services import worktrees as worktrees_service
 from ...services.status import AgentStatus
-from ...utils import select_editor
 from ..console import error, warn
 from ..console import out as console
 from ..tty import confirm
 from ..views import status as status_views
+from .editors import select_editor
 from .fuzzy import FuzzyItem, fuzzy_select
 
 # Action sentinels for interactive mode
