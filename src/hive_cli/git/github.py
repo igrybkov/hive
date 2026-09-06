@@ -139,13 +139,17 @@ def save_cached_issues(issues: list[GitHubIssue], cache_path: Path | None) -> No
         pass
 
 
-def fetch_issues(main_repo: Path) -> list[GitHubIssue] | None:
+def fetch_issues(
+    main_repo: Path, *, cache_path: Path | None = None
+) -> list[GitHubIssue] | None:
     """Fetch GitHub issues assigned to the current user.
 
     Uses github.fetch_issues and github.issue_limit from config.
 
     Args:
         main_repo: Path to the main repository.
+        cache_path: Where to save the result; computed from the remote when
+            None (one `git remote get-url` spawn).
 
     Returns:
         List of GitHub issues if fetch succeeded (may be empty),
@@ -184,7 +188,8 @@ def fetch_issues(main_repo: Path) -> list[GitHubIssue] | None:
             for issue in issues_data
         ]
         # Save to cache (even if empty - to clear closed issues)
-        cache_path = get_issues_cache_path(main_repo)
+        if cache_path is None:
+            cache_path = get_issues_cache_path(main_repo)
         save_cached_issues(issues, cache_path)
         return issues
     except json.JSONDecodeError:

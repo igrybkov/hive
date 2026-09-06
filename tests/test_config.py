@@ -634,3 +634,17 @@ class TestRuntimeWorkdirOverride:
         assert "WORKDIR" not in env
         assert "_HIVE_WORKDIR_SESSION" not in env
         assert "_HIVE_WORKDIR_EXTRAS_SESSION" not in env
+
+
+class TestWorktreesFetchInterval:
+    def test_default_is_five_minutes(self):
+        from hive_cli.config import get_settings
+
+        assert get_settings().worktrees.fetch_interval == 300
+
+    def test_env_override(self, monkeypatch):
+        from hive_cli.config import get_settings, reset_settings
+
+        monkeypatch.setenv("HIVE_WORKTREES_FETCH_INTERVAL", "30")
+        reset_settings()
+        assert get_settings().worktrees.fetch_interval == 30

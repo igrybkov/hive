@@ -25,6 +25,7 @@ from ..core import proc, trace
 from ..core.errors import HiveError
 from ..git import list_worktrees
 from ..mux import get_mux
+from . import facts
 from . import status as status_service
 
 
@@ -93,6 +94,12 @@ def timings(main_repo: Path) -> list[Timing]:
     worktrees: list = []
     rows.append(
         _phase("list worktrees", lambda: worktrees.extend(list_worktrees(main_repo)))
+    )
+    rows.append(
+        _phase(
+            f"git summaries ({len(worktrees)} worktrees)",
+            lambda: facts.summaries(worktrees),
+        )
     )
     rows.append(
         _phase("status collect", lambda: status_service.collect_status(main_repo))

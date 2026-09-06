@@ -36,6 +36,7 @@ def test_timings_counts_spawns_per_phase(temp_git_repo: Path, mocker):
     assert rows["import app"].spawns == 0
     assert rows["load config"].spawns == 0
     assert rows["list worktrees"].spawns == 1
+    assert rows["git summaries (1 worktrees)"].spawns == 2
     assert rows["status collect"].spawns >= 1
     assert all(t.ms >= 0 for t in rows.values())
 

@@ -30,7 +30,7 @@ def _noop(_msg: str) -> None:
 def fetch_branch(main_repo: Path, branch: str) -> bool:
     """Fetch a single branch from origin, quietly.
 
-    Distinct from worktree.fetch_origin(), which fetches everything.
+    Distinct from services.facts.fetch_if_stale(), which fetches everything.
 
     Args:
         main_repo: Path to main repository.

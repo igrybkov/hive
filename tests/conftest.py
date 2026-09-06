@@ -90,6 +90,7 @@ def clean_environment(tmp_path, short_tmp, monkeypatch):
     xdg_dir.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_tmp))
     for var in (
         "HIVE_PANE_LABEL",
@@ -120,6 +121,7 @@ def clean_environment(tmp_path, short_tmp, monkeypatch):
     monkeypatch.delenv("HIVE_WORKTREES_PARENT_DIR", raising=False)
     monkeypatch.delenv("HIVE_WORKTREES_RESUME", raising=False)
     monkeypatch.delenv("HIVE_WORKTREES_SKIP_PERMISSIONS", raising=False)
+    monkeypatch.delenv("HIVE_WORKTREES_FETCH_INTERVAL", raising=False)
     monkeypatch.delenv("HIVE_ZELLIJ_LAYOUT", raising=False)
     monkeypatch.delenv("HIVE_ZELLIJ_SESSION_NAME", raising=False)
     monkeypatch.delenv("HIVE_ZELLIJ_PANE_LABELS", raising=False)

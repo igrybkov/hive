@@ -429,22 +429,6 @@ def get_all_branches(main_repo: Path | None = None) -> list[str]:
     return sorted(branches)
 
 
-def fetch_origin(main_repo: Path | None = None) -> bool:
-    """Fetch from origin to get latest branch info.
-
-    Args:
-        main_repo: Path to main repository. If None, auto-detected.
-
-    Returns:
-        True if fetch succeeded.
-    """
-    if main_repo is None:
-        main_repo = get_main_repo()
-
-    result = proc.run(["git", "-C", str(main_repo), "fetch", "origin"], timeout=60)
-    return result.ok
-
-
 def delete_worktree(worktree_path: Path, force: bool = False) -> None:
     """Delete a worktree.
 

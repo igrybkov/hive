@@ -134,6 +134,8 @@ class WorktreesConfig(HiveBaseSettings):
         symlink_files: Files to symlink from main repo to worktree.
         resume: Default --resume flag for worktree sessions.
         skip_permissions: Default --skip-permissions flag for worktree sessions.
+        fetch_interval: Seconds between `git fetch origin` runs started by the
+            worktree picker (throttled on .git/FETCH_HEAD's age).
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_WORKTREES_")
@@ -146,6 +148,7 @@ class WorktreesConfig(HiveBaseSettings):
     symlink_files: Annotated[list[str], Field(default_factory=list)]
     resume: bool = False
     skip_permissions: bool = False
+    fetch_interval: float = 300.0
 
     @field_validator("post_create", mode="before")
     @classmethod

@@ -31,7 +31,6 @@ from ...config import (
 )
 from ...git import (
     fetch_issues,
-    fetch_origin,
     get_all_branches,
     get_current_branch,
     get_current_worktree_branch,
@@ -41,7 +40,7 @@ from ...git import (
     is_worktree_dirty,
     list_worktrees,
 )
-from ...services import editors
+from ...services import editors, facts
 from ..console import error, info, warn
 from ..flows import worktrees as flows
 from .agents import select_agent
@@ -93,8 +92,8 @@ def _refresh_dirty_status(
 
     update_items, update_header = update_callbacks[0]
 
-    # Start git fetch (this is the slow part, ~3 seconds)
-    fetch_origin(main_repo)
+    # Start git fetch (this is the slow part, ~3 seconds) unless one ran recently
+    facts.fetch_if_stale(main_repo, get_settings().worktrees.fetch_interval)
 
     # Remove fetching indicator immediately after fetch completes
     update_header(base_header)

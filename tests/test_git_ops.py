@@ -18,7 +18,6 @@ from hive_cli.git.repo import (
 from hive_cli.git.worktree import (
     create_worktree,
     delete_worktree,
-    fetch_origin,
     get_all_branches,
     get_current_branch,
     get_default_branch,
@@ -225,14 +224,6 @@ class TestGetAllBranches:
         git("branch", "local-only", cwd=temp_git_repo)
         branches = get_all_branches(temp_git_repo)
         assert branches == ["local-only", "main"]
-
-
-class TestFetchOrigin:
-    def test_succeeds_with_origin(self, repo_with_origin):
-        assert fetch_origin(repo_with_origin) is True
-
-    def test_fails_without_remote(self, temp_git_repo):
-        assert fetch_origin(temp_git_repo) is False
 
 
 class TestGetCurrentBranch:

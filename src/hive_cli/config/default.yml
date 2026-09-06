@@ -97,6 +97,9 @@ worktrees:
   enabled: true
   parent_dir: "~/.worktrees/{repo}/{branch}"
   resume: true # Enable resume for worktree runs (config-driven, not explicit flag)
+  # Seconds between `git fetch origin` runs started by the worktree picker
+  # (measured on .git/FETCH_HEAD's age, so 16 pickers share one fetch).
+  fetch_interval: 300
   copy_files: []
   symlink_files: []
 
