@@ -9,9 +9,12 @@ from cyclopts import App, Parameter
 
 from ..git import get_main_repo
 from ..services import status as service_status
+from ..ui import board
 from ..ui.console import out as console
 from ..ui.pickers import status as status_picker
 from ..ui.views import status as status_views
+
+ENTER_KEYS = ("\r", "\n")
 
 
 def display_status(compact: bool = False) -> None:
@@ -29,6 +32,24 @@ def display_status(compact: bool = False) -> None:
         output = status_views.build_full_output(statuses, main_repo)
 
     console.print(output)
+
+
+def watch_status(compact: bool = False, interval: float = 5.0) -> None:
+    """Live board (repainted only when something changed) until `q`.
+
+    Enter leaves the board for the interactive picker and returns to it.
+    """
+    main_repo = get_main_repo()
+    while True:
+        key, statuses = board.watch(
+            lambda: service_status.collect_status(main_repo),
+            lambda data: status_views.build_watch_view(data, main_repo, compact),
+            interval=interval,
+            exit_keys=ENTER_KEYS,
+        )
+        if key not in ENTER_KEYS:
+            return
+        status_picker.interactive_status(statuses=statuses, main_repo=main_repo)
 
 
 # Cyclopts App
@@ -64,6 +85,10 @@ def status(
             help="One-shot interactive selection. Outputs path for shell cd.",
         ),
     ] = False,
+    interval: Annotated[
+        float,
+        Parameter(name="--interval", help="Seconds between refreshes in watch mode."),
+    ] = 5.0,
 ):
     """Display status of all agent worktrees.
 
@@ -74,10 +99,12 @@ def status(
         hive status --compact    # Compact format (one-shot)
         hive status --watch      # Watch mode (press Enter for interactive)
         hive status -w -c        # Compact watch mode
+        hive status -w --interval 2   # Refresh every 2 seconds
         hive status -i           # Interactive selection
 
     Watch mode keybindings:
         Enter    Open interactive worktree picker
+        r        Refresh now
         q        Quit watch mode
 
     Interactive picker keybindings:
@@ -106,8 +133,8 @@ def status(
         else:
             sys.exit(1)
     elif watch:
-        # Watch mode with interactive selection on Enter
-        status_picker.watch_interactive_loop(compact=compact)
+        # Live board; Enter opens the interactive picker and comes back
+        watch_status(compact=compact, interval=interval)
     else:
         # One-shot display
         display_status(compact=compact)

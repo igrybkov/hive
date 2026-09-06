@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 from rich.console import Group
@@ -74,8 +73,6 @@ def build_full_output(statuses: list[AgentStatus], main_repo: Path) -> Group:
             lines.append(Text.from_markup(f"  [dim]Latest: {last_header}[/]"))
         lines.append(Text(""))
 
-    lines.append(Text.from_markup(f"[dim]Updated: {time.strftime('%H:%M:%S')}[/]"))
-
     return Group(*lines)
 
 
@@ -89,13 +86,7 @@ def build_compact_output(statuses: list[AgentStatus], main_repo: Path) -> Group:
     Returns:
         Group of Text objects for rendering.
     """
-    lines = []
-    timestamp = time.strftime("%H:%M:%S")
-    lines.append(
-        Text.from_markup(
-            f"[bold cyan]Agents[/] [dim]{main_repo.name}[/]  [dim]{timestamp}[/]"
-        )
-    )
+    lines = [Text.from_markup(f"[bold cyan]Agents[/] [dim]{main_repo.name}[/]")]
 
     for status in statuses:
         # Agent label
@@ -125,6 +116,21 @@ def build_compact_output(statuses: list[AgentStatus], main_repo: Path) -> Group:
         )
 
     return Group(*lines)
+
+
+def build_watch_view(
+    statuses: list[AgentStatus], main_repo: Path, compact: bool
+) -> Group:
+    """One `hive status --watch` frame: the board plus the key hint, no clock."""
+    if compact:
+        body = build_compact_output(statuses, main_repo)
+    else:
+        body = build_full_output(statuses, main_repo)
+    hint = Text.from_markup(
+        "[dim]Press [bold]Enter[/bold] to select worktree, "
+        "[bold]r[/bold] to refresh, [bold]q[/bold] to quit[/dim]"
+    )
+    return Group(body, Text(""), hint)
 
 
 # --- detail screen content (pure builders, one per section) ---

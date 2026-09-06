@@ -7,21 +7,17 @@ Git is never patched. Uses the `mocker` fixture (pytest-mock) instead of
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from conftest import CycloptsTestRunner
 
-from hive_cli.app import app
 from hive_cli.services.status import AgentStatus
 from hive_cli.ui.pickers.status import (
     _build_fuzzy_item,
     _delete_worktree_flow,
     _show_worktree_detail,
     interactive_status,
-    watch_interactive_loop,
 )
 
 # Local helpers (no changes to conftest.py) -------------------------------
@@ -285,25 +281,3 @@ class TestShowWorktreeDetail:
 
         mocker.patch("prompt_toolkit.Application", RaisingApplication([[]]))
         assert _show_worktree_detail(status, temp_git_repo) == "quit"
-
-
-# `watch_interactive_loop`: the full raw-terminal loop needs a real pty
-# (termios/tty + select.select on sys.stdin.fileno()), out of scope here per
-# the task brief. This covers the deterministic headless-CI path instead: a
-# stdin with no real fd exits cleanly via `except (OSError, EOFError)`,
-# since `io.UnsupportedOperation` is a subclass of OSError (verified below).
-
-
-class TestWatchInteractiveLoopHeadless:
-    class _NoFilenoStdin:
-        def fileno(self):
-            raise io.UnsupportedOperation("fileno")
-
-    def test_no_tty_stdin_exits_cleanly(
-        self, cli_runner: CycloptsTestRunner, temp_git_repo, monkeypatch
-    ):
-        monkeypatch.setattr(
-            "hive_cli.ui.pickers.status.sys.stdin", self._NoFilenoStdin()
-        )
-        watch_interactive_loop(compact=False)  # returns instead of raising
-        assert cli_runner.invoke(app, ["status", "--watch"]).exit_code == 0

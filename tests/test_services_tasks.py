@@ -74,3 +74,34 @@ class TestDeleteTask:
         assert delete_task(tmp_path, "5") is True
         assert not get_task_file(tmp_path, "5").exists()
         assert delete_task(tmp_path, "5") is False
+
+
+class TestCollectAll:
+    def test_agent_one_only_when_nothing_is_set(self, temp_git_repo):
+        from hive_cli.services.tasks import TaskEntry, collect_all
+
+        assert collect_all(temp_git_repo) == [TaskEntry("1", None)]
+
+    def test_worktrees_then_stray_files(
+        self, temp_git_repo, isolated_worktrees, make_worktree
+    ):
+        from hive_cli.services.tasks import collect_all, read_task, write_task
+
+        make_worktree("feat")
+        write_task(temp_git_repo, "1", "main task")
+        write_task(temp_git_repo, "orphan", "orphan task")
+        tasks_dir = temp_git_repo / ".claude" / "local-agents" / "tasks"
+        (tasks_dir / "weird.md").write_text("# stray\nweird task\n")
+
+        entries = collect_all(temp_git_repo)
+
+        assert [(e.agent_id, e.no_worktree) for e in entries] == [
+            ("1", False),
+            ("feat", False),
+            ("orphan", True),
+            ("weird", True),
+        ]
+        assert "main task" in (entries[0].content or "")
+        assert entries[1].content is None
+        assert entries[3].content == "# stray\nweird task\n"
+        assert read_task(temp_git_repo, "feat").content is None

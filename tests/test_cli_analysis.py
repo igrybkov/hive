@@ -470,3 +470,46 @@ class TestMergeOverlapHiveManagedFiles:
         result = cli_runner.invoke(app, ["merge-preview"])
         assert result.exit_code == 0
         assert "No overlapping files" in result.output
+
+
+class TestMergePreviewWatch:
+    @staticmethod
+    def _fake_watch(frames: list[str]):
+        import io
+
+        from rich.console import Console
+
+        def fake_watch(collect, render, **kwargs):
+            buf = io.StringIO()
+            Console(file=buf, width=100).print(render(collect()))
+            frames.append(buf.getvalue())
+            return "q", None
+
+        return fake_watch
+
+    def test_overlap_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo: Path, mocker
+    ):
+        frames: list[str] = []
+        mocker.patch("hive_cli.ui.board.watch", side_effect=self._fake_watch(frames))
+        result = cli_runner.invoke(app, ["merge-preview", "--watch"])
+        assert result.exit_code == 0
+        assert "File Overlap Analysis" in frames[0]
+        assert "No overlapping files" in frames[0]
+
+    def test_agent_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo: Path, mocker
+    ):
+        frames: list[str] = []
+        mocker.patch("hive_cli.ui.board.watch", side_effect=self._fake_watch(frames))
+        result = cli_runner.invoke(app, ["merge-preview", "1", "-w"])
+        assert result.exit_code == 0
+        assert "Merge Preview:" in frames[0]
+
+    def test_missing_agent_errors(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo: Path, mocker
+    ):
+        mocker.patch("hive_cli.ui.board.watch", side_effect=self._fake_watch([]))
+        result = cli_runner.invoke(app, ["merge-preview", "9", "--watch"])
+        assert result.exit_code == 1
+        assert "not found" in result.output

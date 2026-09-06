@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import select
 import sys
-import termios
-import tty as tty_module
 from dataclasses import dataclass
 from pathlib import Path
-
-from rich.text import Text
 
 from ...git import (
     get_git_status_detail,
@@ -412,95 +407,3 @@ def interactive_status(
             return None
         if refetch:
             statuses = None
-
-
-def _render_watch_frame(
-    statuses: list[AgentStatus], main_repo: Path, compact: bool
-) -> None:
-    """Redraw one watch-mode frame: status board plus the keypress hint."""
-    console.clear()
-
-    if compact:
-        output = status_views.build_compact_output(statuses, main_repo)
-    else:
-        output = status_views.build_full_output(statuses, main_repo)
-
-    console.print(output)
-    console.print()
-    console.print(
-        Text.from_markup(
-            "[dim]Press [bold]Enter[/bold] to select worktree, "
-            "[bold]q[/bold] to quit[/dim]"
-        )
-    )
-
-
-def _wait_and_react_to_keypress(
-    fd: int,
-    old_settings,
-    statuses: list[AgentStatus],
-    main_repo: Path,
-) -> bool:
-    """Wait up to 2s for a keypress in watch mode and react to it.
-
-    Returns:
-        True if watch mode should quit entirely, False to redraw and
-        keep watching.
-    """
-    for _ in range(20):  # 20 * 0.1s = 2s
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if not ready:
-            continue
-
-        key = sys.stdin.read(1)
-        # Restore terminal before any action
-        termios.tcsetattr(fd, termios.TCSANOW, old_settings)
-
-        if key in ("\r", "\n"):
-            # Enter - go to interactive mode
-            console.clear()
-            interactive_status(statuses=statuses, main_repo=main_repo)
-            return False
-        if key.lower() == "q" or key == "\x03":  # q or Ctrl+C
-            return True
-        # Unknown key, set raw mode again and keep waiting
-        tty_module.setraw(fd)
-
-    # Timeout - restore terminal for next display cycle
-    termios.tcsetattr(fd, termios.TCSANOW, old_settings)
-    return False
-
-
-def watch_interactive_loop(compact: bool = False) -> None:
-    """Run watch mode with interactive selection on keypress.
-
-    Shows status board that refreshes every 2 seconds.
-    Press Enter to open interactive picker, then returns to watch mode.
-    Press 'q' to quit.
-
-    Args:
-        compact: If True, use single-line-per-agent format.
-    """
-    main_repo = get_main_repo()
-
-    try:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            while True:
-                statuses = service_status.collect_status(main_repo)
-                _render_watch_frame(statuses, main_repo, compact)
-
-                # Set raw mode for keypress detection
-                tty_module.setraw(fd)
-
-                if _wait_and_react_to_keypress(fd, old_settings, statuses, main_repo):
-                    return
-        finally:
-            # Always restore terminal settings
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-    except KeyboardInterrupt:
-        pass
-    except (OSError, EOFError):
-        pass

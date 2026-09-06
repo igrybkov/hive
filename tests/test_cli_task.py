@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import stat
 from pathlib import Path
 
 import pytest
 from conftest import CycloptsTestRunner
+from rich.console import Console
 
 from hive_cli.app import app
 
@@ -227,3 +229,25 @@ class TestTaskClear:
         result = cli_runner.invoke(app, ["task", "clear", "6"])
         assert result.exit_code == 0
         assert "No task to clear for Agent 6" in result.output
+
+
+class TestTaskWatch:
+    def test_watch_hands_the_listing_to_the_live_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        cli_runner.invoke(app, ["task", "set", "1", "Watch", "me"])
+        frames: list[str] = []
+
+        def fake_watch(collect, render, **kwargs):
+            buf = io.StringIO()
+            Console(file=buf, width=100).print(render(collect()))
+            frames.append(buf.getvalue())
+            assert kwargs["interval"] == 7
+            return "q", None
+
+        mocker.patch("hive_cli.ui.board.watch", side_effect=fake_watch)
+
+        result = cli_runner.invoke(app, ["task", "--watch", "--interval", "7"])
+
+        assert result.exit_code == 0
+        assert "Agent Tasks" in frames[0] and "Watch me" in frames[0]

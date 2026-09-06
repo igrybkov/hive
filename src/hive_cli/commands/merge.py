@@ -3,136 +3,57 @@
 from __future__ import annotations
 
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from ..git import (
-    MergeSimulation,
-    get_current_branch,
-    get_default_branch,
-    get_main_repo,
-    get_worktree_path,
-    list_worktrees,
-    merge_changed_files,
-    simulate_merge,
-)
+from ..core.errors import HiveError
+from ..git import get_main_repo, simulate_merge
+from ..services import merge as merge_service
+from ..ui import board
 from ..ui.console import error, out
-
-
-def _show_file_overlap(main_repo: Path) -> None:
-    """Show files modified by multiple agents.
-
-    Args:
-        main_repo: Path to main repository.
-    """
-    default_branch = get_default_branch(main_repo)
-
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print("[bold cyan]  File Overlap Analysis[/]")
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print()
-
-    # Collect changed files per agent
-    file_agents: dict[str, list[str]] = defaultdict(list)
-
-    worktrees = list_worktrees(main_repo)
-    for wt in worktrees:
-        agent_id = "1" if wt.is_main else wt.branch
-        files = merge_changed_files(wt.path, default_branch)
-        for f in files:
-            file_agents[f].append(agent_id)
-
-    # Find overlaps
-    has_overlap = False
-    out.print("[yellow]Files modified by multiple agents:[/]")
-    out.print()
-
-    for file_path, agents in sorted(file_agents.items()):
-        if len(agents) > 1:
-            has_overlap = True
-            out.print(f"  [red]{file_path}[/]")
-            out.print(f"    [dim]Modified by agents: {' '.join(agents)}[/]")
-
-    if not has_overlap:
-        out.print(
-            "  [green]No overlapping files - agents are working on separate areas[/]"
-        )
-
-    out.print()
-    out.print(
-        "[dim]Tip: Run 'hive merge-preview <agent-id>' to simulate a specific merge[/]"
-    )
-
-
-def _print_merge_result(sim: MergeSimulation) -> bool:
-    """Print the outcome of a merge simulation.
-
-    Args:
-        sim: The MergeSimulation to report.
-
-    Returns:
-        True if the merge would succeed without conflicts.
-    """
-    if sim.conflicts:
-        out.print("[red]✗ Merge would have conflicts[/]")
-        out.print()
-        out.print("[bold]Conflicting files:[/]")
-        for f in sim.conflicting_files:
-            out.print(f"  [red]! {f}[/]")
-        return False
-
-    out.print("[green]✓ Merge would succeed without conflicts[/]")
-    out.print()
-    out.print("[dim]Files that would be changed:[/]")
-    for status, file_path in sim.changed:
-        if status == "A":
-            out.print(f"  [green]+ {file_path}[/]")
-        elif status == "M":
-            out.print(f"  [yellow]~ {file_path}[/]")
-        elif status == "D":
-            out.print(f"  [red]- {file_path}[/]")
-        else:
-            out.print(f"  {status} {file_path}")
-    return True
+from ..ui.views import merge as merge_views
 
 
 def _preview_agent_merge(agent_id: str, main_repo: Path) -> bool:
-    """Preview merge for a specific agent.
-
-    Args:
-        agent_id: Agent identifier.
-        main_repo: Path to main repository.
+    """Preview merge for a specific agent, printing progress as it goes.
 
     Returns:
         True if merge would succeed.
     """
-    if agent_id == "1":
-        path = main_repo
-    else:
-        path = get_worktree_path(f"agent-{agent_id}", main_repo)
-
-    if not path.exists():
-        error(f"Agent {agent_id} worktree not found")
+    try:
+        target = merge_service.resolve_target(agent_id, main_repo)
+    except HiveError as exc:
+        error(str(exc))
         return False
 
-    branch = get_current_branch(path) or "detached"
-    default_branch = get_default_branch(main_repo)
-
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print(f"[bold cyan]  Merge Preview: {branch} → {default_branch}[/]")
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print()
-
-    sim = simulate_merge(path, main_repo, default_branch, progress=out.print)
+    out.print(merge_views.build_preview_header(target))
+    sim = simulate_merge(
+        target.path, main_repo, target.default_branch, progress=out.print
+    )
     if not sim.ok:
         assert sim.error is not None  # every ok=False construction sets it
         error(sim.error)
         return False
+    out.print(merge_views.build_simulation(sim))
+    return not sim.conflicts
 
-    return _print_merge_result(sim)
+
+def _watch(agent_id: str | None, main_repo: Path, interval: float) -> None:
+    """Live board of the overlap analysis, or of one agent's simulated merge."""
+    if agent_id:
+        board.watch(
+            lambda: merge_service.preview(agent_id, main_repo),
+            merge_views.build_preview,
+            interval=interval,
+        )
+    else:
+        board.watch(
+            lambda: merge_service.collect_overlap(main_repo),
+            merge_views.build_overlap,
+            interval=interval,
+        )
 
 
 # Cyclopts App
@@ -149,6 +70,17 @@ def merge_preview(
         str | None,
         Parameter(help="Agent identifier to preview merge for."),
     ] = None,
+    watch: Annotated[
+        bool,
+        Parameter(
+            name=["--watch", "-w"],
+            help="Live board, repainted only when something changes. q quits.",
+        ),
+    ] = False,
+    interval: Annotated[
+        float,
+        Parameter(name="--interval", help="Seconds between refreshes in watch mode."),
+    ] = 5.0,
 ):
     """Preview potential merge conflicts between agent branches.
 
@@ -158,12 +90,22 @@ def merge_preview(
     Examples:
         hive merge-preview      # Show file overlap
         hive merge-preview 2    # Simulate merge for agent 2
+        hive merge-preview --watch        # Live overlap board (q quits)
+        hive merge-preview 2 -w --interval 10
     """
     main_repo = get_main_repo()
+
+    if watch:
+        try:
+            _watch(agent_id, main_repo, interval)
+        except HiveError as exc:
+            error(str(exc))
+            sys.exit(1)
+        return
 
     if agent_id:
         success = _preview_agent_merge(agent_id, main_repo)
         if not success:
             sys.exit(1)
     else:
-        _show_file_overlap(main_repo)
+        out.print(merge_views.build_overlap(merge_service.collect_overlap(main_repo)))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from hive_cli.ui.views.status import (
     build_compact_output,
     build_detail_content,
     build_full_output,
+    build_watch_view,
 )
 
 
@@ -121,6 +123,21 @@ class TestBuildCompactOutput:
         assert "main" in text and "feat" in text
         assert "*" in text
         assert "+1" in text and "-2" in text
+
+
+class TestBuildWatchView:
+    @pytest.mark.parametrize("compact", [True, False])
+    def test_board_plus_key_hint(self, tmp_path: Path, compact):
+        text = render(build_watch_view([make_status()], tmp_path, compact))
+        assert "feat" in text
+        assert "Enter" in text and "refresh" in text and "quit" in text
+
+    @pytest.mark.parametrize("compact", [True, False])
+    def test_no_clock_in_any_view(self, tmp_path: Path, compact):
+        """A clock would force a repaint (and a mux re-render) every tick."""
+        text = render(build_watch_view([make_status()], tmp_path, compact))
+        assert "Updated:" not in text
+        assert not re.search(r"\d\d:\d\d:\d\d", text)
 
 
 class TestBuildDetailContent:

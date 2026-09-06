@@ -2,81 +2,31 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from ..config import get_runtime_settings
-from ..git import get_main_repo, list_worktrees
+from ..git import get_main_repo
 from ..services import editors, tasks
+from ..ui import board
 from ..ui.console import out, success, warn
-
-
-def _show_task(agent_id: str, task_file: Path, no_worktree: bool = False) -> None:
-    """Display task for an agent.
-
-    Args:
-        agent_id: Agent identifier.
-        task_file: Path to task file.
-        no_worktree: Whether agent has no worktree.
-    """
-    if agent_id == "1":
-        out.print("[bold cyan]Agent 1 (main)[/]")
-    elif no_worktree:
-        out.print(f"[bold yellow]{agent_id}[/] [dim](no worktree)[/]")
-    else:
-        out.print(f"[bold magenta]Agent {agent_id}[/]")
-
-    if task_file.exists():
-        out.print("[dim]" + "─" * 41 + "[/]")
-        out.print(task_file.read_text())
-        out.print("[dim]" + "─" * 41 + "[/]")
-    else:
-        out.print("  [dim]No task assigned[/]")
-
-    out.print()
+from ..ui.views import tasks as task_views
 
 
 def show_all_tasks() -> None:
     """Display all agent tasks."""
+    out.print(task_views.build_all_tasks(tasks.collect_all(get_main_repo())))
+
+
+def watch_all_tasks(interval: float = 5.0) -> None:
+    """Live board of all tasks, repainted only when a task file changes."""
     main_repo = get_main_repo()
-    tasks_dir = tasks.get_tasks_dir(main_repo)
-
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print("[bold cyan]  Agent Tasks[/]")
-    out.print("[bold cyan]" + "═" * 55 + "[/]")
-    out.print()
-
-    # Track which agents we've shown
-    shown_agents: set[str] = set()
-
-    # Show task for Agent 1 (main)
-    task_file = tasks.get_task_file(main_repo, "1")
-    _show_task("1", task_file)
-    shown_agents.add("1")
-    shown_agents.add("main")  # Also exclude main
-
-    # Show tasks for worktrees
-    worktrees = list_worktrees(main_repo)
-    for wt in worktrees:
-        if wt.is_main:
-            continue
-        task_file = tasks.get_task_file(main_repo, wt.branch)
-        _show_task(wt.branch, task_file)
-        shown_agents.add(wt.branch)
-
-    # Also show tasks for agents without worktrees
-    if tasks_dir.exists():
-        for task_file in sorted(tasks_dir.glob("*.md")):
-            task_name = task_file.stem  # agent-X -> agent-X
-            if task_name.startswith("agent-"):
-                agent_id = task_name[6:]  # Remove "agent-" prefix
-            else:
-                agent_id = task_name
-
-            if agent_id not in shown_agents:
-                _show_task(agent_id, task_file, no_worktree=True)
+    board.watch(
+        lambda: tasks.collect_all(main_repo),
+        task_views.build_all_tasks,
+        interval=interval,
+    )
 
 
 def show_task(agent_id: str) -> None:
@@ -85,9 +35,7 @@ def show_task(agent_id: str) -> None:
     Args:
         agent_id: Agent identifier.
     """
-    main_repo = get_main_repo()
-    task_file = tasks.get_task_file(main_repo, agent_id)
-    _show_task(agent_id, task_file)
+    out.print(task_views.build_task(tasks.read_task(get_main_repo(), agent_id)))
 
 
 def set_task(agent_id: str, task_content: str) -> None:
@@ -133,17 +81,33 @@ task_app = App(
 
 
 @task_app.default
-def task_default():
+def task_default(
+    watch: Annotated[
+        bool,
+        Parameter(
+            name=["--watch", "-w"],
+            help="Live board, repainted only when a task changes. q quits.",
+        ),
+    ] = False,
+    interval: Annotated[
+        float,
+        Parameter(name="--interval", help="Seconds between refreshes in watch mode."),
+    ] = 5.0,
+):
     """Show all tasks.
 
     Examples:
         hive task                 # Show all tasks
+        hive task --watch         # Live board (q quits)
         hive task 2               # Show task for agent 2
         hive task 2 "Fix the bug" # Set task for agent 2
         hive task edit 2          # Edit task in $EDITOR
         hive task clear 2         # Clear task
     """
-    show_all_tasks()
+    if watch:
+        watch_all_tasks(interval=interval)
+    else:
+        show_all_tasks()
 
 
 @task_app.command

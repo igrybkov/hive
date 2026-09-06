@@ -7,11 +7,19 @@ of the modules this command composes.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from conftest import CycloptsTestRunner, commit_file, git
+from rich.console import Console
 
 from hive_cli.app import app
+
+
+def render(renderable) -> str:
+    buf = io.StringIO()
+    Console(file=buf, width=100).print(renderable)
+    return buf.getvalue()
 
 
 class TestStatusCliOneShot:
@@ -71,3 +79,52 @@ class TestStatusCliInteractiveFlag:
         )
         result = cli_runner.invoke(app, ["status", "-i"])
         assert result.exit_code == 1
+
+
+class TestStatusCliWatch:
+    def test_q_ends_watch_without_opening_the_picker(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        watch = mocker.patch("hive_cli.ui.board.watch", return_value=("q", None))
+        picker = mocker.patch("hive_cli.ui.pickers.status.interactive_status")
+
+        result = cli_runner.invoke(app, ["status", "--watch", "--interval", "2"])
+
+        assert result.exit_code == 0
+        assert watch.call_args.kwargs["interval"] == 2
+        assert watch.call_args.kwargs["exit_keys"] == ("\r", "\n")
+        picker.assert_not_called()
+
+    def test_enter_opens_picker_then_returns_to_the_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        watch = mocker.patch(
+            "hive_cli.ui.board.watch", side_effect=[("\r", ["S"]), ("q", None)]
+        )
+        picker = mocker.patch("hive_cli.ui.pickers.status.interactive_status")
+
+        result = cli_runner.invoke(app, ["status", "-w", "-c"])
+
+        assert result.exit_code == 0
+        picker.assert_called_once_with(
+            statuses=["S"], main_repo=temp_git_repo.resolve()
+        )
+        assert watch.call_count == 2
+
+    def test_collect_and_render_are_wired_to_the_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        frames: list[str] = []
+
+        def fake_watch(collect, render_frame, **kwargs):
+            statuses = collect()
+            frames.append(render(render_frame(statuses)))
+            return "q", statuses
+
+        mocker.patch("hive_cli.ui.board.watch", side_effect=fake_watch)
+
+        result = cli_runner.invoke(app, ["status", "--watch", "--compact"])
+
+        assert result.exit_code == 0
+        assert "Agents" in frames[0] and "main" in frames[0]
+        assert "Enter" in frames[0] and "q" in frames[0]

@@ -15,10 +15,21 @@ above used by `hive task`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..git import list_worktrees
 from ..git.github import GitHubIssueDetails
+
+
+@dataclass(frozen=True)
+class TaskEntry:
+    """One agent's task as `hive task` shows it (content None: no task file)."""
+
+    agent_id: str
+    content: str | None
+    no_worktree: bool = False
 
 
 def get_tasks_dir(main_repo: Path) -> Path:
@@ -135,6 +146,34 @@ def delete_task(main_repo: Path, agent_id: str) -> bool:
         task_file.unlink()
         return True
     return False
+
+
+def read_task(main_repo: Path, agent_id: str) -> TaskEntry:
+    """The task entry for one agent (content None when there is no file)."""
+    task_file = get_task_file(main_repo, agent_id)
+    content = task_file.read_text() if task_file.exists() else None
+    return TaskEntry(agent_id, content)
+
+
+def collect_all(main_repo: Path) -> list[TaskEntry]:
+    """Every task: agent 1, each worktree, then stray task files without a worktree."""
+    entries = [read_task(main_repo, "1")]
+    shown = {"1", "main"}
+    for wt in list_worktrees(main_repo):
+        if wt.is_main:
+            continue
+        entries.append(read_task(main_repo, wt.branch))
+        shown.add(wt.branch)
+
+    tasks_dir = get_tasks_dir(main_repo)
+    if tasks_dir.exists():
+        for task_file in sorted(tasks_dir.glob("*.md")):
+            agent_id = task_file.stem.removeprefix("agent-")
+            if agent_id not in shown:
+                entries.append(
+                    TaskEntry(agent_id, task_file.read_text(), no_worktree=True)
+                )
+    return entries
 
 
 def write_task_file(worktree_path: Path, issue: GitHubIssueDetails) -> None:

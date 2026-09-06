@@ -249,9 +249,10 @@ Display status of all agent worktrees.
 │ COMPACT --compact -c --no-compact  Use single-line-per-agent compact format. [default: False]    │
 │ INTERACTIVE --interactive -i       One-shot interactive selection. Outputs path for shell cd.    │
 │   --no-interactive                 [default: False]                                              │
+│ INTERVAL --interval                Seconds between refreshes in watch mode. [default: 5.0]       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive task --help ===
-Usage: hive task COMMAND
+Usage: hive task COMMAND [ARGS]
 
 Manage agent tasks.
 
@@ -260,6 +261,11 @@ Manage agent tasks.
 │ edit   Edit task in $EDITOR.                                                                     │
 │ set    Set task for an agent.                                                                    │
 │ show   Show task(s).                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ WATCH --watch -w --no-watch  Live board, repainted only when a task changes. q quits. [default:  │
+│                              False]                                                              │
+│ INTERVAL --interval          Seconds between refreshes in watch mode. [default: 5.0]             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive task show --help ===
 Usage: hive task show [ARGS]
@@ -404,7 +410,10 @@ Usage: hive merge-preview [ARGS]
 Preview potential merge conflicts between agent branches.
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
-│ AGENT-ID --agent-id  Agent identifier to preview merge for.                                      │
+│ AGENT-ID --agent-id          Agent identifier to preview merge for.                              │
+│ WATCH --watch -w --no-watch  Live board, repainted only when something changes. q quits.         │
+│                              [default: False]                                                    │
+│ INTERVAL --interval          Seconds between refreshes in watch mode. [default: 5.0]             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive doctor --help ===
 Usage: hive doctor [ARGS]
