@@ -15,9 +15,28 @@ from ..config import (
     get_runtime_settings,
     get_settings,
 )
+from ..git import expand_path, get_main_repo
 from ..services import pane
 from ..ui.console import error, format_yellow
 from .exec_runner import run_in_worktree
+
+
+def _resolved_extra_dirs() -> list[str]:
+    """Extra-dirs override (Ctrl+W) or configured extra_dirs, as resolved paths.
+
+    Session override (set by Ctrl+W in the picker) wins over configured
+    dirs. It contains already-resolved absolute paths plus the displaced
+    primary; settings.extra_dirs entries may contain "~" or be relative to
+    the main repo, so those still need expand_path.
+    """
+    override = get_runtime_settings().workdir_extras_override
+    if override is not None:
+        return override
+    dirs = get_settings().extra_dirs
+    if not dirs:
+        return []
+    main_repo = get_main_repo()
+    return [str(expand_path(d, main_repo)) for d in dirs]
 
 
 def _detect_current_agent(
@@ -138,7 +157,7 @@ def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
                 skip_perm_args = current_agent_config.skip_permissions_args
             agent_extra_args = current_agent_config.extra_args
 
-        extra_dir_args = get_extra_dirs_args(current_agent_name)
+        extra_dir_args = get_extra_dirs_args(current_agent_name, _resolved_extra_dirs())
 
         return pane.run_with_resume(
             current_cmd,
@@ -335,7 +354,7 @@ def run(
     )
 
     # Compute extra-dirs args and extra_args for initial agent
-    initial_extra_dirs = get_extra_dirs_args(detected.name)
+    initial_extra_dirs = get_extra_dirs_args(detected.name, _resolved_extra_dirs())
     has_extra_dirs = bool(initial_extra_dirs)
     init_agent_config = get_agent_config(detected.name)
     initial_agent_extra_args = init_agent_config.extra_args if init_agent_config else []

@@ -7,7 +7,74 @@ from unittest.mock import ANY, patch
 from conftest import CycloptsTestRunner
 
 from hive_cli.app import app
-from hive_cli.config import reload_config
+from hive_cli.commands.run import _resolved_extra_dirs
+from hive_cli.config import get_runtime_settings, reload_config
+
+
+class TestResolvedExtraDirs:
+    """Tests for _resolved_extra_dirs: override vs configured extra_dirs."""
+
+    def test_runtime_override_replaces_configured_dirs(self, tmp_path, monkeypatch):
+        """When rt.workdir_extras_override is set, it replaces settings.extra_dirs."""
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("extra_dirs:\n  - /configured/dir\n")
+
+        rt = get_runtime_settings()
+        rt.workdir_extras_override = ["/runtime/one", "/runtime/two"]
+        try:
+            with patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ):
+                reload_config()
+                result = _resolved_extra_dirs()
+        finally:
+            rt.workdir_extras_override = None
+
+        assert result == ["/runtime/one", "/runtime/two"]
+
+    def test_runtime_override_empty_list_produces_no_dirs(self, tmp_path, monkeypatch):
+        """Empty override list drops all extras even if config has dirs."""
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("extra_dirs:\n  - /configured/dir\n")
+
+        rt = get_runtime_settings()
+        rt.workdir_extras_override = []
+        try:
+            with patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ):
+                reload_config()
+                result = _resolved_extra_dirs()
+        finally:
+            rt.workdir_extras_override = None
+
+        assert result == []
+
+    def test_no_override_resolves_configured_dirs_against_main_repo(
+        self, tmp_path, monkeypatch
+    ):
+        """Without an override, settings.extra_dirs resolve via expand_path."""
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        main_repo = tmp_path / "main-repo"
+        main_repo.mkdir()
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("extra_dirs:\n  - ../sibling\n")
+
+        with (
+            patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ),
+            patch("hive_cli.commands.run.get_main_repo", return_value=main_repo),
+        ):
+            reload_config()
+            result = _resolved_extra_dirs()
+
+        assert result == [str(tmp_path / "sibling")]
 
 
 class TestRunCommand:
@@ -552,7 +619,7 @@ extra_dirs:
             patch(
                 "hive_cli.commands.exec_runner.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.git.get_main_repo", return_value=temp_git_repo),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
             patch(
                 "hive_cli.config.loader.find_config_files",
                 return_value=[config_file],
@@ -589,7 +656,7 @@ extra_dirs:
             patch(
                 "hive_cli.commands.exec_runner.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.git.get_main_repo", return_value=temp_git_repo),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
             patch(
                 "hive_cli.config.loader.find_config_files",
                 return_value=[config_file],
@@ -625,7 +692,7 @@ extra_dirs:
             patch(
                 "hive_cli.commands.exec_runner.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.git.get_main_repo", return_value=temp_git_repo),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
             patch(
                 "hive_cli.config.loader.find_config_files",
                 return_value=[config_file],
