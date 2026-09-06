@@ -27,6 +27,7 @@ uv run pre-commit install           # optional git hooks (ruff lint+format)
 uv run hive --help
 uv run hive run                     # launch an agent in the current dir
 uv run hive zellij                  # open the bundled multi-agent Zellij layout
+uv run hive doctor --timing         # phase | ms | spawns for this repo (HIVE_TRACE=1 for a full trace)
 ```
 
 CI (`.github/workflows/test.yml`) runs `ruff check`, `ruff format --check`, and
@@ -166,3 +167,52 @@ calling one.
 - `os.execvpe` is used to hand off to the agent/zellij process (not
   `subprocess.run`) except in `--restart` mode, which needs the loop to observe
   exit and relaunch.
+
+### Performance and concurrency rules
+
+1. **Never block a thread that owns input.** Code that runs a prompt_toolkit
+   `Application`, a Textual `App`, or reads keys must not call `subprocess`,
+   git, `gh`, the network, `time.sleep`, or a blocking socket. Do that work
+   through `services.aio.call` and hand results back through
+   `update_items()`/`app.invalidate()` (prompt_toolkit) or
+   `post_message`/`call_from_thread` (Textual).
+2. **Paint first, refine later.** Interactive commands show a usable screen
+   within 100 ms of `main()` (250 ms including interpreter start) using data
+   that is already known or one cheap call; everything else arrives as an
+   update. No spinner or "loading" screen that waits on git.
+3. **One spawn beats N.** Every external command goes through `core.proc.run`
+   (traced by `HIVE_TRACE=1`, explicit `timeout`, `capture_output`, no shell).
+   Prefer commands that return many facts at once (`git status --porcelain=v2
+   --branch`, `list-panes --json`) over one command per fact, and one refresher
+   per session (the control plane) over one per pane. Tests on hot paths use
+   `fake_proc` and assert the spawn count.
+4. **Push, don't poll.** State flows over the pane sockets, agent hooks, and
+   multiplexer events. Where polling is unavoidable (Zellij `list-panes`), use
+   ≥ 2 s intervals, a single poller per session, and skip work when nothing
+   changed. Never `select()`/`sleep()` in 100 ms slices on a UI thread. Never
+   use files as an IPC channel.
+5. **asyncio inside apps, threads only to wrap blocking calls.** Textual code
+   uses asyncio tasks (`asyncio.open_unix_connection`, `@work`); blocking
+   calls go through `aio.call` / `@work(thread=True)`; `hive run` uses a
+   daemon thread for its socket server. Shared mutable state needs a lock or a
+   single owner; the pane's `hive run` is the single writer of that pane's
+   state.
+6. **Render only what changed.** Full-screen UIs run on the alternate screen
+   through a diffing renderer — Textual (compositor, dirty regions,
+   synchronized output), prompt_toolkit (screen diff), or Rich `Live` via
+   `ui/board.LiveBoard` (one in-place write per change). Never
+   `console.clear()` inside a loop, never `Live(auto_refresh=True)`, no live
+   clocks or animations in an idle pane (each differing frame makes the
+   multiplexer re-render the pane and its bars; show ages as buckets). State
+   flows one way: a source updates the store, the view diffs the store; views
+   never pull and never repaint on a timer. Multiplexer calls (`rename-pane`,
+   `rename-tab`) are coalesced within 200 ms.
+7. **Start fast.** `import hive_cli.app` stays under ~120 ms (`python -X
+   importtime` is the test). Heavy modules (prompt_toolkit, textual,
+   rich.markdown) are imported inside the functions that need them; command
+   modules are registered lazily; `hive-hook`, `hive_cli.core` and
+   `hive_cli.state` import only the stdlib; nothing spawns git at import or
+   config-load time.
+8. **Measure before optimizing.** Reproduce with `HIVE_TRACE=1` (phase
+   timings and spawn counts) or `hive doctor --timing`, fix the largest number,
+   re-measure, and add a test that pins the improvement.

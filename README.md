@@ -156,6 +156,35 @@ hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
 - `--restart -w feature-123`: Stay in that worktree, no re-selection between restarts
 - `--restart -w=-`: Explicit interactive selection on EACH restart
 
+### Live boards: `--watch`
+
+`hive status`, `hive merge-preview` and `hive task` take `--watch` (and
+`--interval SECONDS`, default 5). The board runs on the alternate screen and
+is repainted only when its content changes, so an idle pane writes nothing
+and the multiplexer has nothing to re-render. Keys: `q` quits, `r` refreshes
+now; in `hive status --watch`, Enter opens the interactive worktree picker
+and returns to the board afterwards.
+
+```bash
+hive status --watch --compact         # the bundled layout's status pane
+hive merge-preview --watch            # file overlap between agents, live
+hive merge-preview 2 -w --interval 30 # simulated merge for agent 2 every 30 s
+hive task --watch                     # every agent's task file
+```
+
+### `hive doctor`
+
+```bash
+hive doctor            # versions (hive, python, git, zellij), multiplexer, agents on PATH
+hive doctor --timing   # phase | ms | spawns: import, config, worktree list, git summaries, status
+```
+
+`--timing` runs each startup phase in-process and counts the commands it
+spawned; the import row is measured in a fresh interpreter with
+`python -X importtime`. For a full trace of any command (phase marks such as
+`picker_first_paint`, every spawned command with its duration, refiner
+timings) run it with `HIVE_TRACE=1`; the lines go to stderr.
+
 ### `hive completion`
 
 Generate shell completion scripts.
@@ -255,6 +284,10 @@ worktrees:
 
   # Default --skip-permissions flag for worktree sessions
   skip_permissions: false
+
+  # Seconds between `git fetch origin` runs started by the worktree picker.
+  # Throttled on .git/FETCH_HEAD's age, so 16 pickers share one fetch.
+  fetch_interval: 300
 
   # Files to symlink from main repo into each new worktree (relative paths)
   symlink_files:
@@ -386,6 +419,17 @@ extra_dirs: []
 - **Default:** `false`
 - **Description:** Default `--skip-permissions` flag for worktree sessions.
 
+#### `worktrees.fetch_interval`
+
+- **Type:** `float` (seconds)
+- **Default:** `300`
+- **Description:** How often the worktree picker runs `git fetch origin`.
+  The picker paints from the worktree list first and refreshes branches,
+  dirty/ahead/behind markers and GitHub issues in the background; the
+  fetch runs only when `.git/FETCH_HEAD` is older than this, so many
+  pickers starting at once (the multi-agent layout) share one fetch.
+  Env: `HIVE_WORKTREES_FETCH_INTERVAL`.
+
 #### `worktrees.auto_select`
 
 Auto-select configuration for the worktree picker. When enabled, automatically selects a branch after a timeout. Any keypress cancels.
@@ -480,6 +524,7 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_WORKTREES_PARENT_DIR`       | string  | Directory template for worktrees               |
 | `HIVE_WORKTREES_RESUME`           | boolean | Default resume for worktree sessions           |
 | `HIVE_WORKTREES_SKIP_PERMISSIONS` | boolean | Default skip-permissions for worktree sessions |
+| `HIVE_WORKTREES_FETCH_INTERVAL`   | float   | Seconds between picker-started `git fetch origin` runs |
 | `HIVE_ZELLIJ_LAYOUT`              | string  | Zellij layout name                             |
 | `HIVE_ZELLIJ_SESSION_NAME`        | string  | Session name template                          |
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
@@ -488,6 +533,7 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
 | `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels` when self-assigned |
 | `HIVE_PANE_SOCK`                  | path    | Pane-state socket served by this pane's `hive run` (exported to the agent) |
+| `HIVE_TRACE`                      | `1`     | Trace phase marks, spawned commands and refiner timings to stderr |
 
 **Legacy variables** (still supported, lower precedence than `HIVE_*`):
 

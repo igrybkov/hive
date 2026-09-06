@@ -4,9 +4,9 @@ This is the architecture reference `CLAUDE.md` points to. It is copied from
 the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
 redesign (issue #1), not only what A0 built. Package-map entries tagged
-`[F1]`/`[F3]`/`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those
-later features. Everything untagged is either already in the tree (built by
-A0) or is a pre-A0 module the refactor left in place.
+`[F3]`/`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those later
+features. Everything untagged is either already in the tree (built by A0, F0
+or F1) or is a pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -63,21 +63,24 @@ hive_cli/
            tmux/         backend.py, conf.py, control.py (control-mode parser)                       [F6]
   services/ worktrees.py provision/remove (git + files + post_create + handoff symlink)
             pane.py      run_loop(pick, launch, restart): state server + agent child lifecycle
+            restart.py   RestartFloor: backoff after fast exits (shared by run/zellij --restart)
             session.py   start(), open_tab(), new_agent_pane(), floating_shell(), toggle_control_plane(), resolve_here()
-            status.py    collect_status(), AgentStatus, shared-notes summary
-            facts.py     git facts refresher (fetch throttle, summaries, gh issues) + control-socket service  [F1/F4]
+            status.py    collect_status() (1 + 2N spawns via git_summary), AgentStatus, shared-notes summary
+            facts.py     git facts refresher: fetch_if_stale, summaries, issues; + control-socket service [F4]
+            merge.py     collect_overlap(), resolve_target(), preview() for merge-preview
+            doctor.py    environment() and timings() (phase | ms | spawns) for `hive doctor`
             watch.py     watch_session() → AsyncIterator[SessionEvent]                               [F4]
             tasks.py handoffs.py editors.py
             registry.py  OPS: name → service callable (the surface exposed over the control socket and to external UIs)
             aio.py       call(fn, *args) = asyncio.to_thread + trace; the one adapter UIs use
   ui/      console.py    shared Console out/err, info/warn/error/success, format_*
            tty.py        raw key reads, confirm, is_interactive
-           board.py      LiveBoard (Rich Live, update on change)                                   [F1]
-           pickers/      fuzzy.py (engine), worktrees.py, agents.py, profiles.py, editors.py, workdir.py, status.py
+           board.py      LiveBoard (Rich Live, update on change) + watch() loop behind every --watch
+           pickers/      fuzzy.py (engine + refiners), worktrees.py, worktree_items.py, agents.py, profiles.py, editors.py, workdir.py, status.py
            flows/        interactive multi-step flows (create/delete worktree, new branch, issue branch) — call services
-           views/        Rich renderables: status tables, handoff preview, detail panels
+           views/        Rich renderables: status.py, merge.py, tasks.py (tables, boards, detail panels)
            tui/          Textual control plane: app.py, screens/, widgets/, model.py (build_rows)  [F4]
-  commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py
+  commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py doctor.py
             pane.py tab.py session.py                                                              [F3, F6]
   hooks/   entry.py templates.py                                                                   [F5]
 ```
@@ -142,8 +145,10 @@ Two worked flows:
 
 - **`hive run` in a pane.** `commands/run.py` parses flags →
   `ui/pickers/worktrees.pick_worktree()` (first paint from
-  `services.worktrees.list()`, then `aio.call(services.facts.summaries)` fills
-  dirty/ahead/behind and `aio.call(git.github.issues)` fills issues) →
+  `worktree_items.first_paint()`, one `git worktree list`; then two refiners
+  run through `aio.call` off the picker's loop: `refine_git` fills
+  dirty/ahead/behind and the branch list after a throttled fetch,
+  `refine_issues` fills GitHub issues) →
   `services.pane.run_loop(pick=pick_worktree, launch=agents.launch.build_command,
   restart=…)` starts the `PaneStateServer`, updates `selecting → starting →
   running → exited`, and renames pane/tab via `mux`. The loop receives the
@@ -233,20 +238,62 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0/F0 status and divergences from this doc
+## A0/F0/F1 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
 and moved the codebase into it. F0 (done 2026-09-06) added the pane state
 layer and the multiplexer protocol: `state/protocol.py`, `state/server.py`,
 `state/client.py`, `mux/base.py`, `mux/__init__.py:get_mux()`, the
 `ZellijMux` backend, `services/pane.py`'s `PaneContext`/`open_pane_context`/
-`run_agent`, and `zellij.pane_labels`. Still missing are the `[F1]`/`[F2]`/
-`[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces `core/models.py`,
-`layout/model.py`, `layout/tabs.py`, `layout/keybinds.py`,
-`services/facts.py`, `services/watch.py`. `services/aio.py` and
-`services/registry.py` exist as unwired stubs (`registry._MODULES = ()`, so
-`load_all()` is currently a no-op) — a later feature finishes hooking them
-up.
+`run_agent`, and `zellij.pane_labels`. F1 (done 2026-09-06) added tracing
+(`core/trace.py` spans, marks, `spawns`), `hive doctor`, `git/status.py`'s
+`GitSummary`/`parse_porcelain_v2`/`git_summary`, `services/facts.py`,
+`services/merge.py`, `services/restart.py`, the picker's refiners
+(`ui/pickers/fuzzy.py`, `worktree_items.py`, `worktrees.py`), `ui/board.py`
+and the `--watch` boards, plus `worktrees.fetch_interval`. Still missing are
+the `[F2]`/`[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces
+`core/models.py`, `layout/model.py`, `layout/tabs.py`, `layout/keybinds.py`,
+`services/watch.py`. `services/registry.py` exists as an unwired stub
+(`registry._MODULES = ()`, so `load_all()` is currently a no-op) — a later
+feature finishes hooking it up.
+
+F1 divergences from the package map and the F1 spec, all deliberate:
+
+- **`services/aio.call` runs on daemon threads, not `asyncio.to_thread`.**
+  prompt_toolkit's `Application.run()` is `asyncio.run()`, which joins the
+  default executor on exit; with `to_thread`, pressing Enter while a refiner
+  sat inside `git fetch` would have delayed the agent launch until the fetch
+  returned. A private executor starting one daemon thread per call keeps the
+  contract (a thread, traced) without the join.
+- **The watch loop is `ui/board.watch`, not `ui/views/status.py:watch`.**
+  Views stay pure; the raw-mode/select/worker loop is generic so `status`,
+  `merge-preview` and `task` share it. Enter still opens the status picker
+  from the board (an `exit_keys` return, then re-enter), which the spec's
+  key list had dropped.
+- **`--watch` is a flag plus `--interval SECONDS`** on all three commands,
+  not `--watch [SECONDS]`: cyclopts has no optional-value flag, and one shape
+  for the three commands is easier to remember.
+- **`RestartFloor` lives in `services/restart.py`** rather than
+  `services/pane.py` (the 600-line cap), imported by `pane` and `session`.
+- **`hive doctor` without `--timing` prints an environment summary**
+  (versions, multiplexer, agents) so the bare command does something; the
+  import phase reports two rows (hive_cli modules only, and cumulative with
+  dependencies), since `hive --help` is dominated by the latter.
+- **The picker's first paint is the worktree list only.** Plain branches and
+  cached GitHub issues arrive with the refiners (each needs a spawn); the
+  "(Fetching...)" / "GitHub issues failed" header updates went with the
+  `update_header` callback. `WorktreeInfo.head` carries the checked-out
+  branch from the same `git worktree list` call. Issues are filtered against
+  every branch known at compose time, so whichever refiner finishes last
+  still yields a consistent list.
+- **Startup marks sit where they are accurate:** `config_loaded` in
+  `config/settings.py` (the singleton), `picker_first_paint`/`picker_refined`
+  in `ui/pickers/fuzzy.py`, `agent_started` in `services/pane.run_agent`.
+- Deleted as dead after F1: `git.worktree.fetch_origin`,
+  `git.status.upstream_ahead_behind`, `git.status.last_commit_summary`, the
+  `console.clear()` watch loop in `ui/pickers/status.py`. `list_worktrees`
+  runs `git worktree list --porcelain` with `cwd=` (clean argv for spawn
+  assertions) and `git_summary` likewise.
 
 Three deliberate additions to `tests/test_architecture.py:SUBPROCESS_OK`
 beyond the A0 spec's own copy of that list, each an existing behavior moved
