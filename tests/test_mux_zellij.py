@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -23,7 +22,8 @@ from hive_cli.mux import get_mux
 from hive_cli.mux.base import PaneInfo, TabInfo
 from hive_cli.mux.zellij import backend
 from hive_cli.mux.zellij.backend import ZellijMux, _pane_id
-from hive_cli.state import legacy_files
+from hive_cli.state.pane_state import PaneState
+from hive_cli.state.server import PaneStateServer
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PANES_JSON = (FIXTURES / "zellij_list_panes.json").read_text()
@@ -393,131 +393,78 @@ class TestRenamePane:
         assert fake_proc.calls == []
 
 
-class TestLegacyFiles:
-    def test_read_state_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(legacy_files, "_STATE_ROOT", tmp_path)
-
-        assert legacy_files.read_state("my-session", "5") == {
-            "status": None,
-            "branch": None,
-            "custom_title": None,
-        }
-
-    def test_state_path_creates_parent(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(legacy_files, "_STATE_ROOT", tmp_path)
-
-        path = legacy_files.state_path("my-session", "5")
-
-        assert path.parent.is_dir()
-        assert str(path).endswith("my-session/5.json")
-
-    def test_read_write_round_trip(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(legacy_files, "_STATE_ROOT", tmp_path)
-        state = {"status": "[working]", "branch": "feature-x", "custom_title": "Test"}
-
-        legacy_files.write_state("s", "1", state)
-
-        assert legacy_files.read_state("s", "1") == state
-
-
-class TestPaneStateManagement:
-    """Integration of the is_running_in_zellij gate, state, and title rebuild."""
+class TestSetPaneFields:
+    """set_pane_status/branch/custom_title: through the pane socket when a
+    `hive run` serves this pane, else composed from the environment."""
 
     @pytest.fixture
-    def zellij_env(self, monkeypatch, tmp_path):
+    def zellij_env(self, monkeypatch):
         monkeypatch.setenv("ZELLIJ", "0")
         monkeypatch.setenv("ZELLIJ_SESSION_NAME", "test-session")
         monkeypatch.setenv("ZELLIJ_PANE_ID", "42")
         monkeypatch.setenv("HIVE_AGENT", "claude")
         monkeypatch.setenv("HIVE_PANE_ID", "1")
         monkeypatch.setenv("HIVE_PANE_LABEL", "Anton")
-        monkeypatch.setattr(legacy_files, "_STATE_ROOT", tmp_path)
 
-    def test_rebuild_pane_title_not_in_zellij(self, monkeypatch):
-        monkeypatch.delenv("ZELLIJ", raising=False)
+    def test_set_pane_status_uses_server_when_present(
+        self, zellij_env, monkeypatch, short_tmp, fake_proc
+    ):
+        with PaneStateServer(short_tmp / "42.sock", PaneState(pane_id="42")) as srv:
+            monkeypatch.setenv("HIVE_PANE_SOCK", str(srv.sock_path))
+            assert backend.set_pane_status("[working]") is True
+            assert srv.state.status_text == "[working]"
+            assert backend.set_pane_branch("feat") is True
+            assert srv.state.branch == "feat"
+            assert backend.set_pane_custom_title(" note ") is True
+            assert srv.state.custom_title == "note"
+            assert backend.set_pane_status(None) is True
+            assert srv.state.status_text == ""
+            assert backend.rebuild_pane_title() is True
+            assert srv.state.version == 5
+        assert fake_proc.calls == []  # the server owns the rename; no zellij here
 
-        assert backend.rebuild_pane_title() is False
+    def test_set_pane_status_falls_back_to_rename(self, zellij_env, fake_proc):
+        assert backend.set_pane_status("[working]") is True
+        assert fake_proc.calls[-1] == [
+            "zellij",
+            "action",
+            "rename-pane",
+            "--pane-id",
+            "42",
+            "c1: Anton [claude] [working]",
+        ]
 
-    def test_rebuild_pane_title_minimal(self, zellij_env):
-        with patch.object(backend, "rename_pane") as mock_rename:
-            result = backend.rebuild_pane_title()
-            assert result is True
-            mock_rename.assert_called_once_with("c1: Anton [claude]")
+    def test_fallback_composes_each_field_alone(self, zellij_env, fake_proc):
+        backend.set_pane_branch("feature-x")
+        assert fake_proc.calls[-1][-1] == "c1: Anton [claude] [feature-x]"
+        backend.set_pane_custom_title("My task")
+        assert fake_proc.calls[-1][-1] == "c1: Anton [claude] My task"
+        backend.set_pane_status(None)
+        assert fake_proc.calls[-1][-1] == "c1: Anton [claude]"
 
-    def test_rebuild_pane_title_fallback_to_cwd(self, monkeypatch, tmp_path):
+    def test_rebuild_pane_title_minimal(self, zellij_env, fake_proc):
+        assert backend.rebuild_pane_title() is True
+        assert fake_proc.calls[-1][-1] == "c1: Anton [claude]"
+
+    def test_rebuild_pane_title_fallback_to_cwd(self, monkeypatch, tmp_path, fake_proc):
         monkeypatch.setenv("ZELLIJ", "0")
         monkeypatch.setenv("ZELLIJ_SESSION_NAME", "test-fallback")
         monkeypatch.setenv("ZELLIJ_PANE_ID", "99")
         monkeypatch.delenv("HIVE_AGENT", raising=False)
         monkeypatch.delenv("HIVE_PANE_ID", raising=False)
-        monkeypatch.setattr(legacy_files, "_STATE_ROOT", tmp_path)
-
         test_dir = tmp_path / "my-project"
         test_dir.mkdir()
         monkeypatch.chdir(test_dir)
 
-        with patch.object(backend, "rename_pane") as mock_rename:
-            result = backend.rebuild_pane_title()
-            assert result is True
-            mock_rename.assert_called_once_with(str(test_dir))
+        assert backend.rebuild_pane_title() is True
+        cmd = fake_proc.calls[-1]
+        assert cmd[-1] == str(test_dir)
+        assert cmd[cmd.index("--pane-id") + 1] == "99"
 
-    def test_rebuild_pane_title_with_status(self, zellij_env, monkeypatch):
-        legacy_files.write_state(
-            "test-session",
-            "42",
-            {"status": "[working]", "branch": None, "custom_title": None},
-        )
-
-        with patch.object(backend, "rename_pane") as mock_rename:
-            backend.rebuild_pane_title()
-            mock_rename.assert_called_once_with("c1: Anton [claude] [working]")
-
-    def test_set_pane_status(self, zellij_env):
-        with patch.object(backend, "rename_pane"):
-            result = backend.set_pane_status("[working]")
-            assert result is True
-
-        state = legacy_files.read_state("test-session", "42")
-        assert state["status"] == "[working]"
-
-    def test_set_pane_status_clear(self, zellij_env):
-        legacy_files.write_state(
-            "test-session",
-            "42",
-            {"status": "[working]", "branch": None, "custom_title": None},
-        )
-
-        with patch.object(backend, "rename_pane"):
-            backend.set_pane_status(None)
-
-        state = legacy_files.read_state("test-session", "42")
-        assert state["status"] is None
-
-    def test_set_pane_branch(self, zellij_env):
-        with patch.object(backend, "rename_pane"):
-            result = backend.set_pane_branch("feature-x")
-            assert result is True
-
-        state = legacy_files.read_state("test-session", "42")
-        assert state["branch"] == "feature-x"
-
-    def test_set_pane_custom_title(self, zellij_env):
-        with patch.object(backend, "rename_pane"):
-            result = backend.set_pane_custom_title("My task")
-            assert result is True
-
-        state = legacy_files.read_state("test-session", "42")
-        assert state["custom_title"] == "My task"
-
-    def test_set_pane_custom_title_replaces(self, zellij_env):
-        legacy_files.write_state(
-            "test-session",
-            "42",
-            {"status": None, "branch": None, "custom_title": "Old title"},
-        )
-
-        with patch.object(backend, "rename_pane"):
-            backend.set_pane_custom_title("New title")
-
-        state = legacy_files.read_state("test-session", "42")
-        assert state["custom_title"] == "New title"
+    def test_not_in_zellij_returns_false(self, monkeypatch, fake_proc):
+        monkeypatch.delenv("ZELLIJ", raising=False)
+        assert backend.rebuild_pane_title() is False
+        assert backend.set_pane_status("[working]") is False
+        assert backend.set_pane_branch("feat") is False
+        assert backend.set_pane_custom_title("t") is False
+        assert fake_proc.calls == []

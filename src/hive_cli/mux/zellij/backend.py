@@ -2,6 +2,10 @@
 hive issues) plus the module-level pane-title helpers `hive zellij
 set-status`/`set-title` and the run loop use.
 
+The set_pane_* helpers write through the pane socket when a `hive run`
+serves this pane and fall back to composing the title from the environment
+(see `_set`); there are no state files any more.
+
 Every ZellijMux call goes through `proc.run(argv, timeout=2)` and ignores
 failures (returns None/[]): a dead multiplexer must never crash hive. Argv
 shapes were verified against `zellij action <sub> --help` on 0.45.1; notably
@@ -19,7 +23,8 @@ from typing import Any
 
 from ...config import get_runtime_settings
 from ...core import proc
-from ...state import legacy_files, pane_state
+from ...state import client
+from ...state.pane_state import PaneState, title_for
 from ..base import PaneInfo, TabInfo
 
 
@@ -257,32 +262,41 @@ def append_to_pane_title(value: str) -> bool:
     return True
 
 
+def _set(**fields: object) -> bool:
+    """Apply title fields to this pane's state.
+
+    When a `hive run` serves this pane (HIVE_PANE_SOCK, or the socket derived
+    from the Zellij pane identity), the fields go through its socket and the
+    server renames the pane. Otherwise (e.g. `hive zellij set-status` from a
+    plain shell pane) the title is composed from the environment and the
+    pane renamed directly.
+
+    Returns:
+        True if running in Zellij, False otherwise.
+    """
+    rt = get_runtime_settings()
+    if not rt.in_zellij:
+        return False
+    if rt.pane_sock and client.set_fields(Path(rt.pane_sock), **fields):
+        return True
+    state = PaneState(
+        hive_pane_id=rt.pane_id_int,
+        label=rt.pane_label or "",
+        agent=rt.agent or "",
+        pane_id=rt.zellij_pane_id or "",
+        **fields,
+    )
+    rename_pane(title_for(state))
+    return True
+
+
 def rebuild_pane_title() -> bool:
-    """Rebuild and set pane title from stored state.
+    """Rebuild and set the pane title from the current state.
 
     Returns:
         True if title was updated, False if not in Zellij.
     """
-    if not is_running_in_zellij():
-        return False
-
-    rt = get_runtime_settings()
-    session = rt.zellij_session_name
-    zellij_pane_id = rt.zellij_pane_id
-    state = legacy_files.read_state(session, zellij_pane_id)
-
-    title = pane_state.compose_title(
-        hive_pane_id=rt.pane_id_int,
-        label=rt.pane_label or "",
-        agent=rt.agent or "",
-        mux_pane_id=zellij_pane_id,
-        status_text=state.get("status") or "",
-        branch=state.get("branch") or "",
-        custom_title=state.get("custom_title") or "",
-        cwd=Path.cwd(),
-    )
-    rename_pane(title)
-    return True
+    return _set()
 
 
 def set_pane_status(status: str | None) -> bool:
@@ -294,15 +308,7 @@ def set_pane_status(status: str | None) -> bool:
     Returns:
         True if title was updated, False if not in Zellij.
     """
-    if not is_running_in_zellij():
-        return False
-    rt = get_runtime_settings()
-    session = rt.zellij_session_name
-    zellij_pane_id = rt.zellij_pane_id
-    state = legacy_files.read_state(session, zellij_pane_id)
-    state["status"] = status.strip() if status else None
-    legacy_files.write_state(session, zellij_pane_id, state)
-    return rebuild_pane_title()
+    return _set(status_text=(status or "").strip())
 
 
 def set_pane_branch(branch: str | None) -> bool:
@@ -314,15 +320,7 @@ def set_pane_branch(branch: str | None) -> bool:
     Returns:
         True if title was updated, False if not in Zellij.
     """
-    if not is_running_in_zellij():
-        return False
-    rt = get_runtime_settings()
-    session = rt.zellij_session_name
-    zellij_pane_id = rt.zellij_pane_id
-    state = legacy_files.read_state(session, zellij_pane_id)
-    state["branch"] = branch.strip() if branch else None
-    legacy_files.write_state(session, zellij_pane_id, state)
-    return rebuild_pane_title()
+    return _set(branch=(branch or "").strip())
 
 
 def set_pane_custom_title(title: str | None) -> bool:
@@ -334,12 +332,4 @@ def set_pane_custom_title(title: str | None) -> bool:
     Returns:
         True if title was updated, False if not in Zellij.
     """
-    if not is_running_in_zellij():
-        return False
-    rt = get_runtime_settings()
-    session = rt.zellij_session_name
-    zellij_pane_id = rt.zellij_pane_id
-    state = legacy_files.read_state(session, zellij_pane_id)
-    state["custom_title"] = title.strip() if title else None
-    legacy_files.write_state(session, zellij_pane_id, state)
-    return rebuild_pane_title()
+    return _set(custom_title=(title or "").strip())

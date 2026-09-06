@@ -127,8 +127,8 @@ def _require_detected_agent(agent: str | None):
     sys.exit(1)
 
 
-def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
-    """Build the run_command callable exec_runner's restart loop invokes.
+def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent, ctx):
+    """Build the run_command callable the restart loop invokes.
 
     Re-detects the agent (and re-reads skip-permissions/extra args/extra dirs)
     on every call, so it respects HIVE_AGENT/Ctrl+A/Ctrl+S changes made by the
@@ -168,6 +168,7 @@ def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
             extra_dir_args,
             args,
             resume,
+            ctx=ctx,
         )
 
     return run_with_dynamic_agent
@@ -347,12 +348,6 @@ def run(
         arg.startswith("-a") or arg.startswith("--agent") for arg in sys.argv
     )
 
-    # Create a dynamic command runner that re-detects agent on each run
-    # This respects HIVE_AGENT changes from the interactive picker (Ctrl+A)
-    run_with_dynamic_agent = _make_dynamic_agent_runner(
-        agent, args, resume, cli_specified_agent
-    )
-
     # Compute extra-dirs args and extra_args for initial agent
     initial_extra_dirs = get_extra_dirs_args(detected.name, _resolved_extra_dirs())
     has_extra_dirs = bool(initial_extra_dirs)
@@ -387,7 +382,17 @@ def run(
     else:
         initial_cmd = [detected.command, *args]
 
-    # Use exec_runner for worktree selection and restart loop
+    # Inside a multiplexer this starts the pane-state server (and self-assigns
+    # a pane number when started outside the layout); run_in_worktree closes it.
+    ctx = pane.open_pane_context()
+
+    # Create a dynamic command runner that re-detects agent on each run
+    # This respects HIVE_AGENT changes from the interactive picker (Ctrl+A)
+    run_with_dynamic_agent = _make_dynamic_agent_runner(
+        agent, args, resume, cli_specified_agent, ctx
+    )
+
+    # Worktree selection and restart loop
     exit_code = run_in_worktree(
         initial_cmd,  # Initial command (may be overridden)
         worktree=worktree,
@@ -402,5 +407,6 @@ def run(
         worktrees_enabled=config.worktrees.enabled,
         auto_select_branch=auto_select_branch,
         auto_select_timeout=auto_select_timeout,
+        ctx=ctx,
     )
     sys.exit(exit_code)

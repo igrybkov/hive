@@ -332,6 +332,7 @@ def exec_cmd(
     """
     import shlex
 
+    from ..services import pane
     from ..ui.flows.worktrees import run_in_worktree
 
     _check_worktrees_enabled()
@@ -355,6 +356,7 @@ def exec_cmd(
         restart_delay=restart_delay,
         use_execvp=not restart and not restart_confirmation,
         layout_has_base_name=True,  # Append branch to existing pane name
+        ctx=pane.null_context(),  # not an agent pane: no identity, no socket
     )
     sys.exit(exit_code)
 

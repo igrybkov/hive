@@ -24,6 +24,7 @@ create_worktree_flow -- a module-level import here would be circular.
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from collections.abc import Callable
@@ -374,6 +375,7 @@ def run_in_worktree(
     worktrees_enabled: bool = True,
     auto_select_branch: str | None = None,
     auto_select_timeout: float = 3.0,
+    ctx: pane.PaneContext | None = None,
 ) -> int:
     """Execute command in worktree with optional restart loop.
 
@@ -399,10 +401,15 @@ def run_in_worktree(
         auto_select_branch: Branch to auto-select after timeout in interactive mode.
             Use "-" for repo's default branch. Any keypress cancels.
         auto_select_timeout: Seconds before auto-selection (default 3.0).
+        ctx: Pane context (see services.pane.open_pane_context); opened here
+            when None. Pass `pane.null_context()` for commands that are not
+            agent panes.
 
     Returns:
         Exit code (only if restart=False and use_execvp=False).
     """
+    if ctx is None:
+        ctx = pane.open_pane_context()
 
     def on_branch_selected(branch: str | None) -> None:
         _update_zellij_pane_name(
@@ -416,7 +423,7 @@ def run_in_worktree(
     return pane.run_loop(
         command,
         select_and_change_to_worktree,
-        runner=run_command or pane.default_run_command,
+        runner=run_command or functools.partial(pane.default_run_command, ctx=ctx),
         worktree=worktree,
         restart=restart,
         restart_confirmation=restart_confirmation,
@@ -432,4 +439,5 @@ def run_in_worktree(
         clear_screen=console.clear,
         progress=console.print,
         confirm_restart=confirm_restart,
+        ctx=ctx,
     )

@@ -171,10 +171,10 @@ class TestRunResume:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "claude", "--resume"])
             # Claude uses --continue for resume
             mock_run.assert_called_once()
@@ -191,10 +191,10 @@ class TestRunResume:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = (
+            mock_run.return_value.wait.return_value = (
                 1  # Resume failed, then fallback returns 1
             )
             cli_runner.invoke(app, ["run", "-a", "claude", "--resume"])
@@ -216,10 +216,10 @@ class TestRunResume:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe"),
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             cli_runner.invoke(app, ["run", "-a", "claude", "-r"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -234,10 +234,10 @@ class TestRunResume:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe"),
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             # Use repeated --args to pass agent arguments in Cyclopts
             cli_runner.invoke(
                 app,
@@ -265,10 +265,10 @@ class TestRunResume:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 1  # Resume failed
+            mock_run.return_value.wait.return_value = 1  # Resume failed
             # Use repeated --args to pass agent arguments in Cyclopts
             cli_runner.invoke(
                 app,
@@ -303,7 +303,7 @@ class TestRunResume:
             cli_runner.invoke(
                 app, ["run", "-a", "claude", "--args", "--model", "--args", "opus"]
             )
-            # Should directly execvp without subprocess.run
+            # Should directly execvp without spawning a child
             mock_execvpe.assert_called_once_with(
                 "claude", ["claude", "--model", "opus"], ANY
             )
@@ -321,10 +321,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "agent", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -341,10 +341,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "cursor-agent", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -361,10 +361,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "codex", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -381,10 +381,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "copilot", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -401,10 +401,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "gemini", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -419,10 +419,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 1  # Resume failed
+            mock_run.return_value.wait.return_value = 1  # Resume failed
             cli_runner.invoke(app, ["run", "-a", "agent", "--resume"])
             # Should have tried resume first, then fallback
             assert mock_run.call_count == 2
@@ -442,10 +442,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe"),
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             # Use repeated --args to pass agent arguments in Cyclopts
             cli_runner.invoke(
                 app,
@@ -464,10 +464,10 @@ class TestRunResumeAgentSpecific:
             patch(
                 "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             result = cli_runner.invoke(app, ["run", "-a", "unknown-agent", "--resume"])
             # Unknown agents have no resume_args, so they run via execvp
             mock_run.assert_not_called()
@@ -490,7 +490,7 @@ class TestRunRestart:
                 "hive_cli.ui.pickers.worktrees.pick_worktree",
                 return_value=(str(temp_git_repo), "test-branch"),
             ) as mock_ensure,
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.is_interactive", return_value=True),
         ):
             # Simulate KeyboardInterrupt to exit the restart loop
@@ -526,7 +526,7 @@ class TestRunRestart:
             from unittest.mock import MagicMock
 
             result = MagicMock()
-            result.returncode = 0
+            result.wait.return_value = 0
             return result
 
         with (
@@ -536,7 +536,7 @@ class TestRunRestart:
                 return_value=(str(temp_git_repo), "test-branch"),
             ) as mock_ensure,
             patch(
-                "hive_cli.services.pane.subprocess.run",
+                "hive_cli.services.pane.subprocess.Popen",
                 side_effect=mock_run_side_effect,
             ),
             patch("hive_cli.ui.flows.worktrees.is_interactive", return_value=True),
@@ -581,7 +581,7 @@ class TestRunRestart:
                 "hive_cli.ui.pickers.worktrees.pick_worktree",
                 return_value=(str(temp_git_repo), "main"),
             ) as mock_ensure,
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
         ):
             # Simulate KeyboardInterrupt to exit the restart loop
             mock_run.side_effect = KeyboardInterrupt
@@ -624,11 +624,11 @@ extra_dirs:
                 "hive_cli.config.loader.find_config_files",
                 return_value=[config_file],
             ),
-            patch.object(real_subprocess, "run") as mock_run,
+            patch.object(real_subprocess, "Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe"),
         ):
             reload_config()
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             cli_runner.invoke(app, ["run", "-a", "claude"])
             agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "claude"]
             assert len(agent_calls) >= 1
@@ -661,11 +661,11 @@ extra_dirs:
                 "hive_cli.config.loader.find_config_files",
                 return_value=[config_file],
             ),
-            patch.object(real_subprocess, "run") as mock_run,
+            patch.object(real_subprocess, "Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe"),
         ):
             reload_config()
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             cli_runner.invoke(app, ["run", "-a", "claude"])
             agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "claude"]
             assert len(agent_calls) >= 1
@@ -727,13 +727,13 @@ class TestRunProfile:
 
         def fake_run(cmd, **kwargs):
             captured_env.update(kwargs.get("env", {}))
-            return type("R", (), {"returncode": 0})()
+            return type("R", (), {"pid": 1, "wait": lambda self: 0})()
 
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch("hive_cli.ui.flows.worktrees.get_git_root", return_value=tmp_path),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.services.pane.subprocess.run", side_effect=fake_run),
+            patch("hive_cli.services.pane.subprocess.Popen", side_effect=fake_run),
         ):
             reload_config()
             cli_runner.invoke(app, ["run", "-a", "claude", "-p", "work", "--resume"])
@@ -753,13 +753,13 @@ class TestRunProfile:
 
         def fake_run(cmd, **kwargs):
             captured_env.update(kwargs.get("env", {}))
-            return type("R", (), {"returncode": 0})()
+            return type("R", (), {"pid": 1, "wait": lambda self: 0})()
 
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch("hive_cli.ui.flows.worktrees.get_git_root", return_value=tmp_path),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.services.pane.subprocess.run", side_effect=fake_run),
+            patch("hive_cli.services.pane.subprocess.Popen", side_effect=fake_run),
         ):
             reload_config()
             cli_runner.invoke(app, ["run", "-a", "claude", "-p", "default", "--resume"])
@@ -776,13 +776,13 @@ class TestRunProfile:
 
         def fake_run(cmd, **kwargs):
             captured_env.update(kwargs.get("env", {}))
-            return type("R", (), {"returncode": 0})()
+            return type("R", (), {"pid": 1, "wait": lambda self: 0})()
 
         with (
             patch("shutil.which", return_value="/usr/bin/gemini"),
             patch("hive_cli.ui.flows.worktrees.get_git_root", return_value=tmp_path),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.services.pane.subprocess.run", side_effect=fake_run),
+            patch("hive_cli.services.pane.subprocess.Popen", side_effect=fake_run),
         ):
             reload_config()
             cli_runner.invoke(app, ["run", "-a", "gemini", "-p", "work", "--resume"])
@@ -801,13 +801,13 @@ class TestRunProfile:
 
         def fake_run(cmd, **kwargs):
             captured_env.update(kwargs.get("env", {}))
-            return type("R", (), {"returncode": 0})()
+            return type("R", (), {"pid": 1, "wait": lambda self: 0})()
 
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch("hive_cli.ui.flows.worktrees.get_git_root", return_value=tmp_path),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.services.pane.subprocess.run", side_effect=fake_run),
+            patch("hive_cli.services.pane.subprocess.Popen", side_effect=fake_run),
         ):
             reload_config()
             cli_runner.invoke(app, ["run", "-a", "claude", "--resume"])

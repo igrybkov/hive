@@ -269,16 +269,16 @@ class TestProfilePickerIntegration:
                 "hive_cli.ui.flows.worktrees.select_and_change_to_worktree",
                 return_value=(True, "main"),
             ),
-            patch("hive_cli.services.pane.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
             patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
             reload_config()
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             # Use --worktree=- (with =) so cyclopts doesn't treat '-' as a flag
             cli_runner.invoke(
                 app, ["run", "-a", "claude", "--worktree=-", "--no-resume"]
             )
 
-        # Dynamic runner uses subprocess.run, not os.execvpe
+        # Dynamic runner spawns a child (Popen), not os.execvpe
         assert mock_run.call_count >= 1
         mock_execvpe.assert_not_called()
