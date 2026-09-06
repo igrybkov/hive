@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from typing import Annotated
 
@@ -10,13 +9,13 @@ from cyclopts import App, Parameter
 
 from ..agents import detect_agent
 from ..agents.launch import get_extra_dirs_args
-from ..agents.profiles import resolve_profile_env
 from ..config import (
     KNOWN_AGENTS,
     get_agent_config,
     get_runtime_settings,
     get_settings,
 )
+from ..services import pane
 from ..ui.console import error, format_yellow
 from .exec_runner import run_in_worktree
 
@@ -109,61 +108,6 @@ def _require_detected_agent(agent: str | None):
     sys.exit(1)
 
 
-def _run_resume_then_command(
-    current_cmd,
-    current_agent_name,
-    current_agent_config,
-    skip_perm_args,
-    agent_extra_args,
-    extra_dir_args,
-    args,
-    resume,
-) -> int:
-    """Try resume_args first when enabled/configured, else run the base command."""
-    if resume and current_agent_config and current_agent_config.resume_args:
-        resume_cmd = [
-            current_cmd[0],
-            *current_agent_config.resume_args,
-            *skip_perm_args,
-            *agent_extra_args,
-            *extra_dir_args,
-            *args,
-        ]
-        child_env = get_runtime_settings().build_child_env()
-        child_env.update(
-            resolve_profile_env(
-                current_agent_name,
-                get_runtime_settings().agent_profile,
-            )
-        )
-        result = subprocess.run(
-            resume_cmd,
-            stderr=subprocess.DEVNULL,
-            env=child_env,
-        )
-        if result.returncode == 0:
-            return 0
-        # Resume failed, fall back to base command
-
-    # Build final command with skip-permissions, extra_args, and extra-dirs
-    injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args]
-    if injected:
-        final_cmd = [current_cmd[0], *injected, *current_cmd[1:]]
-    else:
-        final_cmd = current_cmd
-
-    # Run the agent; inject profile env vars (config-dir redirect + creds)
-    child_env = get_runtime_settings().build_child_env()
-    child_env.update(
-        resolve_profile_env(
-            current_agent_name,
-            get_runtime_settings().agent_profile,
-        )
-    )
-    result = subprocess.run(final_cmd, env=child_env)
-    return result.returncode
-
-
 def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
     """Build the run_command callable exec_runner's restart loop invokes.
 
@@ -196,7 +140,7 @@ def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent):
 
         extra_dir_args = get_extra_dirs_args(current_agent_name)
 
-        return _run_resume_then_command(
+        return pane.run_with_resume(
             current_cmd,
             current_agent_name,
             current_agent_config,

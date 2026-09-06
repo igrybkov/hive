@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from hive_cli.config.runtime import RuntimeSettings
+from hive_cli.ui.console import info
 from hive_cli.ui.pickers.worktrees import (
     ACTION_TOGGLE_SKIP_PERMISSIONS,
     _handle_context_action,
@@ -69,7 +70,7 @@ class TestHandleOpenInEditor:
         ):
             _handle_open_in_editor("__open_in_editor__:feature-x", main_repo, 1, state)
 
-        mock_open.assert_called_once_with(worktree_path, "code")
+        mock_open.assert_called_once_with(worktree_path, "code", progress=info)
         assert state.preselect_branch == "feature-x"
 
     def test_no_editor_selected_leaves_preselect_branch_unset(self, tmp_path):

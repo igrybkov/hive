@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from hive_cli.utils.deps import setup_worktree_files
+from hive_cli.services.worktrees import setup_worktree_files
 
 
 def _make_config(symlink_files=None, copy_files=None):

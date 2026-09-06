@@ -6,7 +6,6 @@ and symlinked into worktrees for easy access.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,9 +17,11 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from ..config import get_runtime_settings
+from ..core import proc
 from ..git import get_main_repo, get_worktree_path, is_worktree_dirty, list_worktrees
-from ..services import handoffs
-from ..utils import confirm, error, info, success, warn
+from ..services import editors, handoffs
+from ..ui.console import error, info, success, warn
+from ..ui.tty import confirm
 
 # Console for output
 console = Console()
@@ -109,11 +110,7 @@ def create_handoff(
     # Handle uncommitted changes
     if commit_changes and is_worktree_dirty(worktree_path):
         warn("Uncommitted changes detected:")
-        result = subprocess.run(
-            ["git", "-C", str(worktree_path), "status", "--short"],
-            capture_output=True,
-            text=True,
-        )
+        result = proc.run(["git", "-C", str(worktree_path), "status", "--short"])
         console.print(result.stdout)
 
         if confirm("Create WIP commit?"):
@@ -222,7 +219,7 @@ git status
         handoff_file.write_text(template)
 
     editor = get_runtime_settings().editor
-    subprocess.run([editor, str(handoff_file)])
+    editors.edit_in_terminal_editor(editor, handoff_file)
 
 
 def clear_handoff(branch: str) -> None:

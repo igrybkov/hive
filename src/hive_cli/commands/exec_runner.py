@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -14,8 +13,9 @@ from ..config import get_runtime_settings
 from ..git import get_git_root, get_main_repo, get_worktree_path
 from ..mux.zellij.backend import set_pane_branch
 from ..services import pane
+from ..ui.console import error, format_yellow
 from ..ui.pickers.worktrees import pick_worktree
-from ..utils import error, format_yellow, is_interactive
+from ..ui.tty import is_interactive
 
 console = Console()
 
@@ -83,12 +83,6 @@ def select_and_change_to_worktree(
         if git_root:
             os.chdir(git_root)
         return True, None
-
-
-def _default_run_command(command: list[str]) -> int:
-    """Default command runner using subprocess."""
-    result = subprocess.run(command, env=get_runtime_settings().build_child_env())
-    return result.returncode
 
 
 def _update_zellij_pane_name(
@@ -170,7 +164,7 @@ def run_in_worktree(
     return pane.run_loop(
         command,
         select_and_change_to_worktree,
-        runner=run_command or _default_run_command,
+        runner=run_command or pane.default_run_command,
         worktree=worktree,
         restart=restart,
         restart_confirmation=restart_confirmation,

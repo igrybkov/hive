@@ -20,17 +20,10 @@ from ..git import (
     worktree_exists,
 )
 from ..services import handoffs
+from ..services import worktrees as worktrees_service
+from ..ui.console import error, format_yellow, info, success, warn
 from ..ui.pickers.worktrees import pick_worktree
-from ..utils import (
-    error,
-    format_yellow,
-    info,
-    install_dependencies,
-    is_interactive,
-    setup_worktree_files,
-    success,
-    warn,
-)
+from ..ui.tty import is_interactive
 
 
 def _complete_branch(ctx, param, incomplete):
@@ -194,12 +187,12 @@ def create(
         path = create_worktree(branch, main_repo)
         success(f"Created worktree at {path}")
 
-        setup_worktree_files(path, main_repo)
+        worktrees_service.setup_worktree_files(path, main_repo, progress=warn)
         handoffs.setup_handoff_symlink(path, branch, main_repo)
 
         if install:
             info("Installing dependencies...")
-            if install_dependencies(path):
+            if worktrees_service.install_dependencies(path):
                 success("Dependencies installed")
             else:
                 warn("Some dependencies may have failed to install")

@@ -15,7 +15,7 @@ from ..git.repo import change_to_main_repo, get_session_name
 from ..layout.resolve import resolve_layout
 from ..mux.zellij.backend import set_pane_custom_title, set_pane_status
 from ..services import session
-from ..utils import error, format_yellow
+from ..ui.console import error, format_yellow
 
 console = Console()
 stderr_console = Console(stderr=True)

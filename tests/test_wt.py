@@ -269,7 +269,7 @@ class TestProfilePickerIntegration:
                 "hive_cli.commands.exec_runner.select_and_change_to_worktree",
                 return_value=(True, "main"),
             ),
-            patch("hive_cli.commands.run.subprocess.run") as mock_run,
+            patch("hive_cli.services.pane.subprocess.run") as mock_run,
             patch("hive_cli.commands.exec_runner.os.execvpe") as mock_execvpe,
         ):
             reload_config()

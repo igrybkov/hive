@@ -35,7 +35,6 @@ from pathlib import Path
 from ..config import load_config
 from ..core import proc
 from ..git import create_worktree, delete_worktree, get_worktree_path
-from ..ui.console import warn
 from . import handoffs
 
 
@@ -43,7 +42,12 @@ def _noop(_message: str) -> None:
     pass
 
 
-def setup_worktree_files(worktree_path: Path, main_repo: Path) -> bool:
+def setup_worktree_files(
+    worktree_path: Path,
+    main_repo: Path,
+    *,
+    progress: Callable[[str], None] = _noop,
+) -> bool:
     """Symlink and copy files from main repo to worktree.
 
     Processes ``worktrees.symlink_files`` and ``worktrees.copy_files``
@@ -53,6 +57,7 @@ def setup_worktree_files(worktree_path: Path, main_repo: Path) -> bool:
     Args:
         worktree_path: Path to the new worktree.
         main_repo: Path to the main repository.
+        progress: Called with human-readable warning lines.
 
     Returns:
         True if all files were set up successfully.
@@ -61,17 +66,26 @@ def setup_worktree_files(worktree_path: Path, main_repo: Path) -> bool:
     all_ok = True
 
     for rel in config.worktrees.symlink_files:
-        if not _setup_file(worktree_path, main_repo, rel, copy=False):
+        if not _setup_file(
+            worktree_path, main_repo, rel, copy=False, progress=progress
+        ):
             all_ok = False
 
     for rel in config.worktrees.copy_files:
-        if not _setup_file(worktree_path, main_repo, rel, copy=True):
+        if not _setup_file(worktree_path, main_repo, rel, copy=True, progress=progress):
             all_ok = False
 
     return all_ok
 
 
-def _setup_file(worktree_path: Path, main_repo: Path, rel: str, *, copy: bool) -> bool:
+def _setup_file(
+    worktree_path: Path,
+    main_repo: Path,
+    rel: str,
+    *,
+    copy: bool,
+    progress: Callable[[str], None] = _noop,
+) -> bool:
     """Set up a single file (symlink or copy) in the worktree.
 
     Args:
@@ -79,23 +93,24 @@ def _setup_file(worktree_path: Path, main_repo: Path, rel: str, *, copy: bool) -
         main_repo: Path to the main repository.
         rel: Relative path of the file.
         copy: If True, copy the file; otherwise, create a symlink.
+        progress: Called with human-readable warning lines.
 
     Returns:
         True if successful.
     """
     if Path(rel).is_absolute():
-        warn(f"Skipping absolute path: {rel}")
+        progress(f"Skipping absolute path: {rel}")
         return False
 
     source = main_repo / rel
     target = worktree_path / rel
 
     if not source.exists():
-        warn(f"Source does not exist, skipping: {source}")
+        progress(f"Source does not exist, skipping: {source}")
         return False
 
     if target.exists() or target.is_symlink():
-        warn(f"Target already exists, skipping: {target}")
+        progress(f"Target already exists, skipping: {target}")
         return False
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -272,7 +287,7 @@ def provision(
     path = create_worktree(branch, main_repo)
     progress(f"Created worktree at {path}")
 
-    setup_worktree_files(path, main_repo)
+    setup_worktree_files(path, main_repo, progress=progress)
     handoffs.setup_handoff_symlink(path, branch, main_repo)
 
     progress("Installing dependencies...")

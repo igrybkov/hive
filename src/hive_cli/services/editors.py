@@ -1,21 +1,16 @@
-"""Installed-editor discovery and launching.
-
-NOTE (A0 step 6): open_in_editor() still calls ui.console.info() directly,
-a deliberate, temporary architecture-guard violation (services -> ui isn't
-sideways-ok) -- like agents/launch.py's deferred git import from step 3,
-tests/test_architecture.py is red until step 10 regardless. Deferred to
-step 7, when ui/pickers/editors.py exists and can pass a `progress`
-callback instead (see the spec's print -> progress pattern).
-"""
+"""Installed-editor discovery and launching."""
 
 from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..ui.console import info
+
+def _noop(_message: str) -> None:
+    pass
 
 
 @dataclass
@@ -40,22 +35,41 @@ def get_available_editors() -> list[EditorConfig]:
     return [e for e in EDITORS if shutil.which(e.command)]
 
 
-def open_in_editor(path: Path, editor: EditorConfig) -> None:
-    """Open worktree in editor.
+def open_in_editor(
+    path: Path,
+    editor: EditorConfig,
+    *,
+    progress: Callable[[str], None] = _noop,
+) -> None:
+    """Open worktree in editor (detached, does not wait for it to close).
 
     Args:
         path: Path to the worktree.
         editor: Editor configuration.
+        progress: Called with a human-readable status line.
     """
     cmd = [editor.command]
     if editor.chat_flag:
         cmd.append(editor.chat_flag)
     cmd.append(str(path))
 
-    info(f"Opening in {editor.name}...")
+    progress(f"Opening in {editor.name}...")
     subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+
+
+def edit_in_terminal_editor(editor: str, path: Path) -> None:
+    """Launch a terminal $EDITOR on path, inheriting the tty.
+
+    Blocks until the editor exits, unlike open_in_editor()'s detached GUI
+    launch.
+
+    Args:
+        editor: Editor command (e.g. from RuntimeSettings.editor).
+        path: File to open.
+    """
+    subprocess.run([editor, str(path)])

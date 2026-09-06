@@ -1,4 +1,5 @@
-"""Worktree-selection restart loop and workdir-override plumbing.
+"""Worktree-selection restart loop, workdir-override plumbing, and agent
+subprocess launching.
 
 Moved from commands/exec_runner.py (A0 step 6). Printing (screen clears,
 restart messages, the restart-confirmation prompt) becomes
@@ -14,15 +15,23 @@ here).
 it calls ui/pickers/worktrees.py:pick_worktree (the wt.py pass's renamed,
 complexipy-clean `_interactive_ensure`). run_in_worktree passes it in as
 `pick`.
+
+`default_run_command`/`run_with_resume` moved verbatim from
+commands/exec_runner.py's `_default_run_command` and
+commands/run.py's `_run_resume_then_command` (A0 step 9's subprocess-
+confinement pass): the agent child inherits the tty, so it stays raw
+`subprocess.run` rather than `core.proc.run` (which always captures).
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
 
+from ..agents.profiles import resolve_profile_env
 from ..config import get_runtime_settings, get_settings
 from ..git import expand_path, get_main_repo
 
@@ -32,6 +41,67 @@ Pick = Callable[..., tuple[bool, str | None]]
 
 def _noop(*_args: object, **_kwargs: object) -> None:
     return None
+
+
+def default_run_command(command: list[str]) -> int:
+    """Default command runner: run and wait, inheriting the tty."""
+    result = subprocess.run(command, env=get_runtime_settings().build_child_env())
+    return result.returncode
+
+
+def run_with_resume(
+    current_cmd,
+    current_agent_name,
+    current_agent_config,
+    skip_perm_args,
+    agent_extra_args,
+    extra_dir_args,
+    args,
+    resume,
+) -> int:
+    """Try resume_args first when enabled/configured, else run the base command."""
+    if resume and current_agent_config and current_agent_config.resume_args:
+        resume_cmd = [
+            current_cmd[0],
+            *current_agent_config.resume_args,
+            *skip_perm_args,
+            *agent_extra_args,
+            *extra_dir_args,
+            *args,
+        ]
+        child_env = get_runtime_settings().build_child_env()
+        child_env.update(
+            resolve_profile_env(
+                current_agent_name,
+                get_runtime_settings().agent_profile,
+            )
+        )
+        result = subprocess.run(
+            resume_cmd,
+            stderr=subprocess.DEVNULL,
+            env=child_env,
+        )
+        if result.returncode == 0:
+            return 0
+        # Resume failed, fall back to base command
+
+    # Build final command with skip-permissions, extra_args, and extra-dirs
+    injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args]
+    if injected:
+        final_cmd = [current_cmd[0], *injected, *current_cmd[1:]]
+    else:
+        final_cmd = current_cmd
+
+    # Run the agent; inject profile env vars (config-dir redirect + creds)
+    child_env = get_runtime_settings().build_child_env()
+    child_env.update(
+        resolve_profile_env(
+            current_agent_name,
+            get_runtime_settings().agent_profile,
+        )
+    )
+    result = subprocess.run(final_cmd, env=child_env)
+    return result.returncode
 
 
 def apply_workdir_override(primary_path: Path) -> None:

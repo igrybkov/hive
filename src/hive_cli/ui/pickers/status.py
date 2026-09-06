@@ -22,7 +22,7 @@ from ...services import editors
 from ...services import status as service_status
 from ...services import worktrees as worktrees_service
 from ...services.status import AgentStatus
-from ..console import error, warn
+from ..console import error, info, warn
 from ..console import out as console
 from ..tty import confirm
 from ..views import status as status_views
@@ -175,7 +175,7 @@ def _apply_detail_result(
     if result == "editor":
         editor = select_editor()
         if editor:
-            editors.open_in_editor(status.path, editor)
+            editors.open_in_editor(status.path, editor, progress=info)
         return None, True
     if result == "delete":
         _clear_screen_full()
@@ -347,7 +347,7 @@ def _handle_picker_selection(
         if worktree_path:
             editor = select_editor()
             if editor:
-                editors.open_in_editor(worktree_path, editor)
+                editors.open_in_editor(worktree_path, editor, progress=info)
         return None, False
 
     status_by_branch = {s.branch: s for s in statuses}

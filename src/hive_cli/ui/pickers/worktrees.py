@@ -42,7 +42,7 @@ from ...git import (
     list_worktrees,
 )
 from ...services import editors
-from ..console import error, warn
+from ..console import error, info, warn
 from ..flows import worktrees as flows
 from .agents import select_agent
 from .editors import select_editor
@@ -215,7 +215,7 @@ def _handle_open_in_editor(
     if editor is None:
         return
 
-    editors.open_in_editor(worktree_path, editor)
+    editors.open_in_editor(worktree_path, editor, progress=info)
     state.preselect_branch = branch_to_open
 
 
