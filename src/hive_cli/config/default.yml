@@ -128,7 +128,7 @@ worktrees:
 zellij:
   # Multi-agent layout bundled with this package. Also accepts a layout name
   # from ~/.config/zellij/layouts/ or an explicit path (see resolve_layout()
-  # in utils/layouts.py). Set to null for Zellij's built-in default.
+  # in layout/resolve.py). Set to null for Zellij's built-in default.
   layout: "agent"
   session_name: "{repo}"
 

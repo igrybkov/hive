@@ -3,14 +3,15 @@
 NOTE (A0 step 4): this barrel is a deliberate, temporary re-export shim.
 `terminal.py`/`tty.py` moved to `ui/console.py`/`ui/tty.py` (and
 `selection.py`'s dead fzf/numbered-select code was deleted, keeping only
-`is_interactive`, folded into `ui/tty.py`). Deleting this barrel outright
-would force every remaining command module that still imports through it
-to be touched now -- several of them (`status.py`, `wt.py`, `zellij.py`,
-`handoff.py`, `exec_runner.py`, `merge.py`, `diff.py`, `completion.py`)
-carry pre-existing complexipy violations that get fixed for real when
-those modules are actually moved/slimmed in steps 5-9, so touching them
-here would mean throwaway pure-extraction refactors. This barrel is
-deleted in step 8, alongside that real rewrite.
+`is_interactive`, folded into `ui/tty.py`); `zellij.py`/`layouts.py` moved
+to `mux/zellij/backend.py`+`state/`/`layout/resolve.py` (step 9). Deleting
+this barrel outright would force every remaining command module that still
+imports through it to be touched now -- several of them (`status.py`,
+`wt.py`, `handoff.py`, `exec_runner.py`, `merge.py`, `diff.py`,
+`completion.py`) carry pre-existing complexipy violations that get fixed
+for real when those modules are actually moved/slimmed in steps 5-9, so
+touching them here would mean throwaway pure-extraction refactors. This
+barrel is deleted in step 8, alongside that real rewrite.
 """
 
 # Re-exported from their new ui/ home (moved in step 4).
@@ -47,16 +48,7 @@ from .editors import (
     select_editor,
 )
 from .fuzzy import FuzzyItem, fuzzy_select
-from .layouts import resolve_layout
 from .workdir import WORKDIR_CLEAR, select_workdir
-from .zellij import (
-    is_running_in_zellij,
-    rebuild_pane_title,
-    rename_pane,
-    set_pane_branch,
-    set_pane_custom_title,
-    set_pane_status,
-)
 
 __all__ = [
     "EditorConfig",
@@ -80,14 +72,7 @@ __all__ = [
     "prompt",
     "read_line_from_tty",
     "read_single_key",
-    "is_running_in_zellij",
     "open_in_editor",
-    "rebuild_pane_title",
-    "resolve_layout",
-    "rename_pane",
-    "set_pane_branch",
-    "set_pane_custom_title",
-    "set_pane_status",
     "select_agent",
     "select_editor",
     "select_workdir",

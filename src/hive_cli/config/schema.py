@@ -160,7 +160,7 @@ class ZellijConfig(HiveBaseSettings):
     """Configuration for Zellij terminal multiplexer.
 
     Attributes:
-        layout: Layout to use, resolved by `utils.layouts.resolve_layout()`.
+        layout: Layout to use, resolved by `layout.resolve.resolve_layout()`.
             Accepts three forms: the name of a layout bundled with this package
             (currently just "agent", the multi-agent layout — resolves to its
             packaged path), the name of a layout in Zellij's own layout dir

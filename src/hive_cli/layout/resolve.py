@@ -19,7 +19,7 @@ def resolve_layout(value: str | None) -> str | None:
         return None
     if "/" in value or value.endswith(".kdl"):
         return str(Path(value).expanduser())
-    bundled = files("hive_cli").joinpath("layouts", f"{value}.kdl")
+    bundled = files("hive_cli.layout").joinpath("bundled", f"{value}.kdl")
     if bundled.is_file():
         return str(bundled)  # uv/pipx install wheels unzipped: a real fs path
     return value

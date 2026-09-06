@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import shutil
-import subprocess
 import sys
-import time
 from typing import Annotated
 
 from cyclopts import App, Parameter
@@ -15,9 +12,10 @@ from rich.console import Console
 from ..agents import detect_agent
 from ..config import KNOWN_AGENTS, get_runtime_settings, get_settings
 from ..git.repo import change_to_main_repo, get_session_name
+from ..layout.resolve import resolve_layout
+from ..mux.zellij.backend import set_pane_custom_title, set_pane_status
+from ..services import session
 from ..utils import error, format_yellow
-from ..utils.layouts import resolve_layout
-from ..utils.zellij import set_pane_custom_title, set_pane_status
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -69,7 +67,7 @@ def zellij(
 
     # Change to main repo
     change_to_main_repo()
-    session_name = get_session_name()
+    repo_name = get_session_name()
 
     # Detect agent
     detected = detect_agent(preferred=agent)
@@ -92,40 +90,27 @@ def zellij(
     # Get zellij config
     config = get_settings()
 
-    # Build session name from template
-    # Supports {repo} and {agent} placeholders
-    full_session_name = config.zellij.session_name.format(
-        repo=session_name,
-        agent=detected.name,
+    full_session_name = session.session_name(
+        config.zellij.session_name, repo=repo_name, agent=detected.name
     )
-
-    # Build zellij command
-    cmd = ["zellij"]
-
-    # Add layout if configured (bundled name -> packaged path, path/`.kdl` ->
-    # expanded, otherwise passed through for zellij to resolve itself)
-    resolved_layout = resolve_layout(config.zellij.layout)
-    if resolved_layout:
-        cmd.extend(["--layout", resolved_layout])
-
-    cmd.extend(["attach", "--create", full_session_name])
-
+    cmd = session.attach_argv(config.zellij.layout, full_session_name)
     child_env = rt.build_child_env()
 
-    if restart:
-        # Auto-restart loop
-        try:
-            while True:
-                subprocess.run(cmd, env=child_env)
-                console.print("\n[hive] Zellij exited. Restarting... (Ctrl+C to stop)")
-                if restart_delay > 0:
-                    time.sleep(restart_delay)
-        except KeyboardInterrupt:
-            console.print("\n[hive] Stopped.")
-            sys.exit(0)
-    else:
-        # Execute zellij, replacing the current process
-        os.execvpe("zellij", cmd, child_env)
+    def on_restart() -> None:
+        console.print("\n[hive] Zellij exited. Restarting... (Ctrl+C to stop)")
+
+    def on_stop() -> None:
+        console.print("\n[hive] Stopped.")
+        sys.exit(0)
+
+    session.start(
+        cmd,
+        child_env,
+        restart=restart,
+        restart_delay=restart_delay,
+        on_restart=on_restart,
+        on_stop=on_stop,
+    )
 
 
 @zellij_app.command(name="set-status")

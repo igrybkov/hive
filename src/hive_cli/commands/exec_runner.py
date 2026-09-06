@@ -12,10 +12,10 @@ from rich.console import Console
 
 from ..config import get_runtime_settings
 from ..git import get_git_root, get_main_repo, get_worktree_path
+from ..mux.zellij.backend import set_pane_branch
 from ..services import pane
 from ..ui.pickers.worktrees import pick_worktree
 from ..utils import error, format_yellow, is_interactive
-from ..utils.zellij import set_pane_branch
 
 console = Console()
 

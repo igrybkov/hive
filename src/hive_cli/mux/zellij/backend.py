@@ -1,12 +1,19 @@
-"""Zellij terminal multiplexer integration."""
+"""Zellij terminal multiplexer integration: pane titles via `zellij action`.
+
+Moved from utils/zellij.py (A0 step 9). Title composition (`compose_title`)
+and state persistence (`read_state`/`write_state`) split out to
+`state/pane_state.py` and `state/legacy_files.py` -- this module owns the
+Zellij-specific I/O: the `is_running_in_zellij()` gate, runtime-settings
+lookups, and the `zellij action rename-pane` calls.
+"""
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
-from ..config import get_runtime_settings
+from ...config import get_runtime_settings
+from ...core import proc
+from ...state import legacy_files, pane_state
 
 
 def is_running_in_zellij() -> bool:
@@ -32,7 +39,7 @@ def rename_pane(name: str) -> None:
     if not is_running_in_zellij():
         return
 
-    subprocess.run(
+    proc.run(
         [
             "zellij",
             "action",
@@ -41,8 +48,6 @@ def rename_pane(name: str) -> None:
             get_runtime_settings().zellij_pane_id,
             name,
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
     )
 
 
@@ -64,7 +69,7 @@ def append_to_pane_title(value: str) -> bool:
     if not value:
         return False
 
-    subprocess.run(
+    proc.run(
         [
             "zellij",
             "action",
@@ -73,56 +78,12 @@ def append_to_pane_title(value: str) -> bool:
             get_runtime_settings().zellij_pane_id,
             f" {value}",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
     )
     return True
 
 
-def _get_state_file() -> Path | None:
-    """Get path to pane state file, or None if not in Zellij.
-
-    State files are stored at /tmp/hive-zellij/{session}/{pane_id}.json
-    """
-    if not is_running_in_zellij():
-        return None
-
-    rt = get_runtime_settings()
-    session = rt.zellij_session_name
-    pane_id = rt.zellij_pane_id
-    state_dir = Path("/tmp/hive-zellij") / session
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / f"{pane_id}.json"
-
-
-def _read_state() -> dict:
-    """Read pane title state from file."""
-    state_file = _get_state_file()
-    if state_file and state_file.exists():
-        try:
-            return json.loads(state_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"status": None, "branch": None, "custom_title": None}
-
-
-def _write_state(state: dict) -> None:
-    """Write pane title state to file."""
-    state_file = _get_state_file()
-    if state_file:
-        state_file.write_text(json.dumps(state))
-
-
 def rebuild_pane_title() -> bool:
     """Rebuild and set pane title from stored state.
-
-    Title format depends on context:
-    - With HIVE_PANE_ID (in layout): c{id}: {label} [{agent}] {status} [{branch}]
-      Base reconstructed from HIVE_PANE_ID + HIVE_PANE_LABEL (Zellij 0.44.1
-      changed rename-pane to full-replace instead of append-to-layout).
-
-    - Without HIVE_PANE_ID: {agent}-{pane_id} {status} [{branch}] {custom_title}
-      or falls back to cwd relative to home
 
     Returns:
         True if title was updated, False if not in Zellij.
@@ -130,49 +91,23 @@ def rebuild_pane_title() -> bool:
     if not is_running_in_zellij():
         return False
 
-    state = _read_state()
     rt = get_runtime_settings()
-    pane_id = rt.pane_id
-    agent = rt.agent
+    session = rt.zellij_session_name
+    zellij_pane_id = rt.zellij_pane_id
+    state = legacy_files.read_state(session, zellij_pane_id)
 
-    parts: list[str] = []
-
-    if pane_id:
-        # Reconstruct the layout base name since rename-pane now replaces entirely.
-        label = rt.pane_label
-        if label:
-            parts.append(f"c{pane_id}: {label}")
-        else:
-            parts.append(f"c{pane_id}")
-
-        if agent:
-            parts.append(f"[{agent}]")
-    else:
-        # Not in layout - need to set the full name including prefix
-        if agent:
-            # Use ZELLIJ_PANE_ID as fallback for pane numbering
-            zellij_pane_id = rt.zellij_pane_id
-            parts.append(f"{agent}-{zellij_pane_id}")
-        else:
-            # Fallback to current directory path relative to home
-            cwd = Path.cwd()
-            try:
-                relative = cwd.relative_to(Path.home())
-                parts.append(f"~/{relative}")
-            except ValueError:
-                # cwd is not under home, use absolute path
-                parts.append(str(cwd))
-
-    if state.get("status"):
-        parts.append(state["status"])
-
-    if state.get("branch"):
-        parts.append(f"[{state['branch']}]")
-
-    if state.get("custom_title"):
-        parts.append(state["custom_title"])
-
-    rename_pane(" ".join(parts))
+    title = pane_state.compose_title(
+        pane_id=rt.pane_id,
+        pane_label=rt.pane_label,
+        agent=rt.agent,
+        zellij_pane_id=zellij_pane_id,
+        status=state.get("status"),
+        branch=state.get("branch"),
+        custom_title=state.get("custom_title"),
+        cwd=Path.cwd(),
+        home=Path.home(),
+    )
+    rename_pane(title)
     return True
 
 
@@ -187,9 +122,12 @@ def set_pane_status(status: str | None) -> bool:
     """
     if not is_running_in_zellij():
         return False
-    state = _read_state()
+    rt = get_runtime_settings()
+    session = rt.zellij_session_name
+    zellij_pane_id = rt.zellij_pane_id
+    state = legacy_files.read_state(session, zellij_pane_id)
     state["status"] = status.strip() if status else None
-    _write_state(state)
+    legacy_files.write_state(session, zellij_pane_id, state)
     return rebuild_pane_title()
 
 
@@ -204,9 +142,12 @@ def set_pane_branch(branch: str | None) -> bool:
     """
     if not is_running_in_zellij():
         return False
-    state = _read_state()
+    rt = get_runtime_settings()
+    session = rt.zellij_session_name
+    zellij_pane_id = rt.zellij_pane_id
+    state = legacy_files.read_state(session, zellij_pane_id)
     state["branch"] = branch.strip() if branch else None
-    _write_state(state)
+    legacy_files.write_state(session, zellij_pane_id, state)
     return rebuild_pane_title()
 
 
@@ -221,7 +162,10 @@ def set_pane_custom_title(title: str | None) -> bool:
     """
     if not is_running_in_zellij():
         return False
-    state = _read_state()
+    rt = get_runtime_settings()
+    session = rt.zellij_session_name
+    zellij_pane_id = rt.zellij_pane_id
+    state = legacy_files.read_state(session, zellij_pane_id)
     state["custom_title"] = title.strip() if title else None
-    _write_state(state)
+    legacy_files.write_state(session, zellij_pane_id, state)
     return rebuild_pane_title()

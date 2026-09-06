@@ -42,6 +42,9 @@ UI_LIB_HOMES = {"ui", "commands", "app"}
 SUBPROCESS_OK = {
     "core/proc.py",
     "services/pane.py",  # agent child keeps the tty (Popen)
+    "services/session.py",  # restart loop keeps the tty; execvpe hand-off
+    "services/editors.py",  # GUI editor launch is a detached, unwaited Popen
+    "git/analysis.py",  # git|delta pipe: streamed straight to the terminal
     "mux/zellij/backend.py",  # execvpe hand-off to `zellij attach`
     "mux/tmux/backend.py",
     "commands/zellij.py",
