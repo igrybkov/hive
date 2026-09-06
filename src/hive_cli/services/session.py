@@ -19,6 +19,7 @@ from collections.abc import Callable
 from ..core import paths
 from ..layout.resolve import resolve_layout
 from ..mux.base import Mux
+from .restart import RestartFloor
 
 
 def session_name(template: str, *, repo: str, agent: str) -> str:
@@ -64,6 +65,7 @@ def start(
     restart_delay: float,
     on_restart: Callable[[], None],
     on_stop: Callable[[], None],
+    restart_floor: RestartFloor | None = None,
 ) -> None:
     """Launch zellij: hand off the process, or loop restarting it on exit.
 
@@ -76,15 +78,19 @@ def start(
         restart_delay: Seconds to wait between restarts.
         on_restart: Called after zellij exits, before each restart.
         on_stop: Called on Ctrl+C while restart-looping.
+        restart_floor: Backoff after fast exits (default: a real one).
     """
     clean_stale_sock_dir(mux, session)
     if not restart:
         os.execvpe("zellij", cmd, env)
         return
+    floor = restart_floor or RestartFloor()
     try:
         while True:
+            floor.started()
             subprocess.run(cmd, env=env)
             on_restart()
+            floor.exited()
             if restart_delay > 0:
                 time.sleep(restart_delay)
     except KeyboardInterrupt:

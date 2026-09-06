@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 from pathlib import Path
 
@@ -23,11 +24,16 @@ def get_git_root() -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+@functools.lru_cache(maxsize=1)
 def get_main_repo() -> Path:
     """Get the main repository path (not worktree).
 
     For worktrees, this returns the path to the main repository.
     For main repositories, returns the repository path.
+
+    Cached for the life of the process: every command asks several times
+    and the answer only changes with a chdir into another repository
+    (`get_main_repo.cache_clear()` then; tests do it per test).
 
     Returns:
         Path to the main repository, or current directory if not in a git repo.

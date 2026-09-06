@@ -44,6 +44,7 @@ from ..state.pane_state import (
     title_for,
 )
 from ..state.server import PaneStateServer
+from .restart import RestartFloor
 
 CommandRunner = Callable[[list[str]], int]
 Pick = Callable[..., tuple[bool, str | None]]
@@ -361,6 +362,7 @@ def _restart_loop(
     clear_screen: Callable[[], None],
     progress: Callable[[str], None],
     confirm_restart: Callable[[], None],
+    restart_floor: RestartFloor,
 ) -> int:
     """Re-select (or re-affirm) a worktree and re-run command until cancelled."""
     first_iteration = True
@@ -384,10 +386,12 @@ def _restart_loop(
             _publish_starting(ctx, selected_branch)
 
             clear_screen()
+            restart_floor.started()
             runner(command)
             if _stop_requested(ctx):
                 break
             progress(f"\n[dim]{restart_message}[/]")
+            restart_floor.exited()
             if restart_confirmation:
                 confirm_restart()
             if restart_delay > 0:
@@ -467,6 +471,7 @@ def run_loop(
     progress: Callable[[str], None] = _noop,
     confirm_restart: Callable[[], None] = _noop,
     ctx: PaneContext | None = None,
+    restart_floor: RestartFloor | None = None,
 ) -> int:
     """Run command in a worktree, optionally looping with --restart.
 
@@ -500,6 +505,8 @@ def run_loop(
             when restart_confirmation is set.
         ctx: The pane context; opened here when None and always closed on
             return, so the pane socket disappears when the loop ends.
+        restart_floor: Backoff applied after fast exits in --restart mode
+            (default: a real RestartFloor; tests inject a fake clock/sleep).
 
     Returns:
         Exit code (only if restart=False and use_execvp=False).
@@ -535,6 +542,7 @@ def run_loop(
                 clear_screen=clear_screen,
                 progress=progress,
                 confirm_restart=confirm_restart,
+                restart_floor=restart_floor or RestartFloor(),
             )
 
         return _single_run(

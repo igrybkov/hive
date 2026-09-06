@@ -540,6 +540,8 @@ class TestRunRestart:
                 side_effect=mock_run_side_effect,
             ),
             patch("hive_cli.ui.flows.worktrees.is_interactive", return_value=True),
+            # the restart floor would otherwise sleep 1 s after the fast exit
+            patch("hive_cli.services.restart.time.sleep"),
         ):
             result = cli_runner.invoke(app, ["run", "-a", "claude", "--restart"])
             # Should have called pick_worktree at least once

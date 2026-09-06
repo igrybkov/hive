@@ -144,9 +144,11 @@ def clean_environment(tmp_path, short_tmp, monkeypatch):
     # Eagerly creating settings ensures find_git_root() subprocess call
     # happens here (outside test mock contexts), not during the test.
     from hive_cli.config import get_settings, reset_settings
+    from hive_cli.git.repo import get_main_repo
 
     reset_settings()
     get_settings()
+    get_main_repo.cache_clear()
 
     import hive_cli.config.runtime as _rt_mod
 

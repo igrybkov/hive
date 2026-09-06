@@ -58,3 +58,42 @@ def test_session_start_without_mux_skips_cleanup():
 
 def test_clean_stale_sock_dir_tolerates_missing_dir():
     session.clean_stale_sock_dir(FakeMux(session="other"), "never-created")
+
+
+def test_restart_loop_sleeps_after_fast_exits():
+    from hive_cli.services.restart import RestartFloor
+
+    class Clock:
+        now = 1000.0
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    slept: list[float] = []
+    restarts: list[int] = []
+    stops: list[int] = []
+
+    def on_restart():
+        restarts.append(1)
+        if len(restarts) == 2:
+            raise KeyboardInterrupt
+
+    def fake_run(cmd, env):
+        clock.now += 0.1
+
+    with patch("hive_cli.services.session.subprocess.run", side_effect=fake_run) as run:
+        session.start(
+            ["zellij", "attach", "--create", "s"],
+            {},
+            session="s",
+            mux=None,
+            restart=True,
+            restart_delay=0,
+            on_restart=on_restart,
+            on_stop=lambda: stops.append(1),
+            restart_floor=RestartFloor(sleep=slept.append, clock=clock),
+        )
+
+    assert run.call_count == 2
+    assert slept == [1] and stops == [1]

@@ -328,3 +328,21 @@ class TestListWorktreesHead:
     def test_detached_main_has_empty_head(self, temp_git_repo):
         git("checkout", "-q", "--detach", cwd=temp_git_repo)
         assert list_worktrees(temp_git_repo)[0].head == ""
+
+
+class TestGetMainRepoCache:
+    def test_second_call_adds_no_spawn(self, fake_proc, tmp_path):
+        fake_proc.script(
+            ("git", "rev-parse", "--git-common-dir"), stdout=f"{tmp_path}/.git\n"
+        )
+        get_main_repo.cache_clear()
+
+        first = get_main_repo()
+        second = get_main_repo()
+
+        assert first == second == tmp_path.resolve()
+        assert fake_proc.count("git", "rev-parse") == 1
+
+    def test_conftest_clears_the_cache_between_tests(self, temp_git_repo):
+        # The previous test cached a fake path; this one must see its own repo.
+        assert get_main_repo() == temp_git_repo.resolve()

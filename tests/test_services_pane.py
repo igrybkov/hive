@@ -45,6 +45,12 @@ from hive_cli.state.server import PaneStateServer
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_restart_floor_sleep(monkeypatch):
+    """The real RestartFloor sleeps 1-5 s after a fast exit; never in tests."""
+    monkeypatch.setattr("hive_cli.services.restart.time.sleep", lambda _s: None)
+
+
 class TestApplyWorkdirOverride:
     def test_noop_when_no_override(self, tmp_path, monkeypatch):
         """Without rt.workdir, cwd is not changed and override list stays None."""
@@ -569,3 +575,69 @@ class TestRunLoopLifecycle:
         with pytest.raises(SystemExit):
             run_loop(["claude"], pick, runner=lambda cmd: 0, ctx=ctx)
         assert not sock.exists()
+
+
+# ---------------------------------------------------------------------------
+# RestartFloor
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self, now: float = 1000.0):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class TestRestartFloor:
+    def test_backoff_then_reset_after_a_long_run(self):
+        from hive_cli.services.restart import RestartFloor
+
+        clock = _Clock()
+        slept: list[float] = []
+        floor = RestartFloor(sleep=slept.append, clock=clock)
+
+        for _ in range(5):
+            floor.started()
+            clock.now += 0.1
+            floor.exited()
+        assert slept == [1, 2, 4, 5, 5]
+
+        floor.started()
+        clock.now += 10  # a run of >= 10 s: no sleep, back to 1 s next time
+        floor.exited()
+        assert slept == [1, 2, 4, 5, 5]
+
+        floor.started()
+        clock.now += 0.1
+        floor.exited()
+        assert slept[-1] == 1
+
+    def test_exited_without_started_is_a_noop(self):
+        from hive_cli.services.restart import RestartFloor
+
+        slept: list[float] = []
+        RestartFloor(sleep=slept.append, clock=_Clock()).exited()
+        assert slept == []
+
+    def test_restart_loop_sleeps_after_fast_exits(self):
+        from hive_cli.services.restart import RestartFloor
+
+        clock = _Clock()
+        slept: list[float] = []
+
+        def runner(cmd):
+            clock.now += 0.1
+            return 0
+
+        run_loop(
+            ["claude"],
+            _fake_pick_sequence((True, "main"), (True, "main"), (False, None)),
+            runner=runner,
+            restart=True,
+            worktree="main",
+            restart_floor=RestartFloor(sleep=slept.append, clock=clock),
+        )
+
+        assert slept == [1, 2]
