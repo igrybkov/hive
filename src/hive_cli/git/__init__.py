@@ -25,18 +25,16 @@ from .worktree import (
     WorktreeInfo,
     create_worktree,
     delete_worktree,
-    expand_path,
     fetch_origin,
     get_all_branches,
     get_current_branch,
     get_default_branch,
     get_worktree_path,
-    get_worktrees_base,
     is_worktree_dirty,
     list_worktrees,
-    sanitize_branch_name,
     worktree_exists,
 )
+from .worktree_paths import expand_path, get_worktrees_base, sanitize_branch_name
 
 __all__ = [
     "CommitInfo",
