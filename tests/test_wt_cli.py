@@ -24,7 +24,7 @@ class TestWtExecCli:
     ):
         wt_path = make_worktree("feat-a")
 
-        with patch("hive_cli.commands.exec_runner.os.execvpe") as mock_execvpe:
+        with patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe:
             result = cli_runner.invoke(
                 app, ["wt", "exec", "-c", "echo hi", "-w", "feat-a"]
             )

@@ -332,7 +332,7 @@ def exec_cmd(
     """
     import shlex
 
-    from .exec_runner import run_in_worktree
+    from ..ui.flows.worktrees import run_in_worktree
 
     _check_worktrees_enabled()
 

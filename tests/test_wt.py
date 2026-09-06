@@ -260,17 +260,17 @@ class TestProfilePickerIntegration:
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
-                "hive_cli.commands.exec_runner.get_git_root",
+                "hive_cli.ui.flows.worktrees.get_git_root",
                 return_value=tmp_path,
             ),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
             # Provide a fake select_and_change_to_worktree that picks main
             patch(
-                "hive_cli.commands.exec_runner.select_and_change_to_worktree",
+                "hive_cli.ui.flows.worktrees.select_and_change_to_worktree",
                 return_value=(True, "main"),
             ),
             patch("hive_cli.services.pane.subprocess.run") as mock_run,
-            patch("hive_cli.commands.exec_runner.os.execvpe") as mock_execvpe,
+            patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
             reload_config()
             mock_run.return_value.returncode = 0

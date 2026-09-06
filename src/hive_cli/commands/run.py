@@ -18,7 +18,7 @@ from ..config import (
 from ..git import expand_path, get_main_repo
 from ..services import pane
 from ..ui.console import error, format_yellow
-from .exec_runner import run_in_worktree
+from ..ui.flows.worktrees import run_in_worktree
 
 
 def _resolved_extra_dirs() -> list[str]:
