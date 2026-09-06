@@ -19,7 +19,7 @@ about internals, not usage.
 ```bash
 uv sync --dev                       # install deps (incl. dev group)
 uv run pytest                       # run tests
-uv run pytest tests/test_zellij.py -v   # single file
+uv run pytest tests/test_cli_zellij.py -v   # single file
 uv run ruff check .                 # lint
 uv run ruff format .                # format (check-only: --check)
 uv run pre-commit install           # optional git hooks (ruff lint+format)
@@ -46,8 +46,59 @@ uv tool install --from git+https://github.com/igrybkov/hive.git hive-cli
 ## Architecture
 
 Entry point: `hive_cli.app:app`, a `cyclopts.App` (`app.py`) that registers each
-command module's sub-app. Commands are cyclopts apps under `commands/`; the CLI
-itself does not use argparse/click.
+command module's sub-app *lazily* (a `"module:attribute"` string target per
+command in `LAZY_COMMANDS`), so `import hive_cli.app` never pulls in
+`wt.py`/`zellij.py`/etc — only the command that actually runs gets imported.
+Commands are cyclopts apps under `commands/`; the CLI itself does not use
+argparse/click.
+
+The codebase is layered core → config/state/hooks → git/agents/layout/mux →
+services → ui → commands, each layer importing only from itself or strictly
+lower layers (`mux` may additionally import `layout`'s model). The full
+package map, call-flow diagrams, and process/state-ownership model live in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the short version:
+
+| # | Layer | Packages | May import |
+|---|---|---|---|
+| 0 | core | `core/` | stdlib only |
+| 1 | config / state / hooks | `config/`, `state/`, `hooks/` | core |
+| 2 | domain | `git/`, `agents/`, `layout/`, `mux/` | 0–1 (`mux → layout` model only) |
+| 3 | services | `services/` | 0–2; never ui/commands/rich/prompt_toolkit/textual, never print/input/sys.exit |
+| 4 | ui | `ui/` | 0–3; never commands |
+| 5 | cli | `commands/`, `app.py` | 0–4; never other `commands/*` modules |
+
+`tests/test_architecture.py` enforces this by AST inspection — a violation
+fails the build instead of surfacing in review. Its allow-lists (which files
+may `import subprocess` directly, which packages may use rich/prompt_toolkit,
+etc.) **are** the architecture; change them only together with
+`docs/ARCHITECTURE.md`.
+
+### Architecture rules
+
+1. **Layers only point down.** core ← config/state/hooks ← git/agents/layout/
+   mux ← services ← ui ← commands. `mux` may import `layout` (model); nothing
+   else crosses sideways. `tests/test_architecture.py` fails the build
+   otherwise.
+2. **Logic lives in `services/`; commands and UIs are adapters.** A command
+   function parses, calls one service or flow, prints, and returns. If a
+   command or a widget needs a subprocess, a git fact, or a file, it asks a
+   service for it.
+3. **Services are synchronous, silent, and UI-free.** No `rich`, no
+   `prompt_toolkit`, no `textual`, no `print`, no stdin, no `sys.exit`. Return
+   dataclasses; raise `HiveError`. Take decisions as arguments or callables.
+4. **UIs call services only through `services.aio.call` and receive pushes
+   only through `services.watch.watch_session`.** No subprocess, no socket
+   handling, no polling inside `ui/`.
+5. **One process owns each piece of state**; others read it over the pane or
+   control socket. New operations are added to `services/registry.OPS` so
+   sockets, CLI and UIs expose the same thing.
+6. **Every external command goes through `core.proc.run`**; agent launches
+   and `execvpe` hand-offs are the only exceptions.
+7. **Import modules across layers, not functions** (`from hive_cli.core import
+   proc`; `proc.run(...)`) so tests can patch at the module boundary.
+8. **Add features into existing homes** (see the package map in
+   `docs/ARCHITECTURE.md`); a new top-level package needs a line in that map
+   and in the layer table first.
 
 ### Config (`config/`)
 
@@ -79,26 +130,29 @@ matters because an unseeded profile dir silently defeats credential isolation fo
 agents that need a seeded config (e.g. Codex's `cli_auth_credentials_store =
 "file"`).
 
-### Worktree execution (`git/`, `commands/exec_runner.py`)
+### Worktree execution (`git/`, `services/pane.py`, `ui/flows/worktrees.py`)
 
 `git/worktree.py` and `git/repo.py` wrap `git worktree` (create/list/path
 resolution, main-repo detection so commands always operate from the right root).
-`exec_runner.py` is the shared "run a command in a worktree, optionally loop with
---restart" core used by `hive run`, `hive wt exec`, and `hive zellij --restart`;
-`commands/wt.py` layers the interactive fuzzy picker (`utils/fuzzy.py`) on top for
-`-w=-` selection.
+`services/pane.py:run_with_resume` and `ui/flows/worktrees.py:run_in_worktree`
+hold the "run a command in a worktree, optionally loop with --restart" core
+used by `hive run`, `hive wt exec`, and `hive zellij --restart`;
+`ui/pickers/worktrees.py` layers the interactive fuzzy picker
+(`ui/pickers/fuzzy.py`) on top for `-w=-` selection.
 
-### Zellij integration (`commands/zellij.py`, `utils/zellij.py`, `layouts/`)
+### Zellij integration (`commands/zellij.py`, `services/session.py`, `mux/zellij/`, `layout/`)
 
-The bundled multi-agent layout ships at `src/hive_cli/layouts/agent.kdl` (16 named
-panes running `hive run --restart`, plus a `hive status --watch` board) and is
-included in the wheel via `[tool.hatch.build] include`. `hive zellij` resolves the
-configured `zellij.layout` value to something `zellij --layout` accepts — a bundled
-name, a user-defined name in `~/.config/zellij/layouts/`, or an explicit path — and
-launches `zellij attach --create`. `utils/zellij.py` manages pane-title state
-(status/branch/custom-title segments) via `zellij action rename-pane`, always
-targeting `$ZELLIJ_PANE_ID` explicitly since Zellij's rename-pane defaults to the
-*focused* pane, not the calling one.
+The bundled multi-agent layout ships at `src/hive_cli/layout/bundled/agent.kdl`
+(16 named panes running `hive run --restart`, plus a `hive status --watch`
+board) and is included in the wheel via `[tool.hatch.build] include`.
+`layout/resolve.py:resolve_layout` resolves the configured `zellij.layout`
+value to something `zellij --layout` accepts — a bundled name, a user-defined
+name in `~/.config/zellij/layouts/`, or an explicit path; `services/session.py`
+builds the session name and attach argv and launches `zellij attach --create`.
+`mux/zellij/backend.py` manages pane-title state (status/branch/custom-title
+segments) via `zellij action rename-pane`, always targeting `$ZELLIJ_PANE_ID`
+explicitly since Zellij's rename-pane defaults to the *focused* pane, not the
+calling one.
 
 ### Things to keep in mind when editing
 
