@@ -168,12 +168,34 @@ class ZellijConfig(HiveBaseSettings):
             path / anything ending in ".kdl" (expanded via `~`). Defaults to
             "agent". Set to None to use Zellij's built-in default layout.
         session_name: Session name template.
+        pane_labels: Names for agent panes c1..c16, in the order of the
+            bundled layout (`c1: Anton` -> "Anton"). A `hive run` started on
+            demand (outside the layout) takes the first free pane number and
+            its label from this list.
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_ZELLIJ_")
 
     layout: str | None = "agent"
     session_name: str = "{repo}"
+    pane_labels: list[str] = [
+        "Anton",
+        "Bohdan",
+        "Chris",
+        "Dmytro",
+        "Emily",
+        "Frank",
+        "Grygoriy",
+        "Henry",
+        "Ihor",
+        "Jake",
+        "Kateryna",
+        "Liam",
+        "Mykola",
+        "Noah",
+        "Orest",
+        "Petro",
+    ]
 
 
 class GitHubConfig(HiveBaseSettings):

@@ -287,6 +287,12 @@ zellij:
   # Supports placeholders: {repo} = repository name, {agent} = agent name
   session_name: "{repo}"
 
+  # Labels for agent panes c1..c16, in the bundled layout's order. A
+  # `hive run` started on demand (outside the layout) takes the first free
+  # pane number and its label from this list.
+  # pane_labels: [Anton, Bohdan, Chris, Dmytro, Emily, Frank, Grygoriy, Henry,
+  #               Ihor, Jake, Kateryna, Liam, Mykola, Noah, Orest, Petro]
+
 # GitHub integration
 github:
   # Fetch issues assigned to you in worktree picker
@@ -417,6 +423,16 @@ Each item can be:
 - **Type:** `string`
 - **Default:** `"{repo}"`
 - **Description:** Session name template. Supports `{repo}` (repository name) and `{agent}` (agent name) placeholders.
+
+#### `zellij.pane_labels`
+
+- **Type:** `list[string]`
+- **Default:** the sixteen names used by the bundled layout's `c1: Anton` … `c16: Petro` panes
+- **Description:** Labels for agent panes, in pane-number order. Inside a
+  Zellij session, a `hive run` started outside the layout (a pane you opened
+  by hand) picks the first pane number no other `hive run` in the session
+  holds and takes its label from this list, so its title reads like the
+  layout's own panes. Env: `HIVE_ZELLIJ_PANE_LABELS` (comma-separated).
 
 #### `github.fetch_issues`
 

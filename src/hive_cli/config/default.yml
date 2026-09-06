@@ -131,6 +131,26 @@ zellij:
   # in layout/resolve.py). Set to null for Zellij's built-in default.
   layout: "agent"
   session_name: "{repo}"
+  # Labels for agent panes c1..c16, in the bundled layout's order. A `hive run`
+  # started on demand (outside the layout) takes the first free pane number
+  # and its label from here.
+  pane_labels:
+    - Anton
+    - Bohdan
+    - Chris
+    - Dmytro
+    - Emily
+    - Frank
+    - Grygoriy
+    - Henry
+    - Ihor
+    - Jake
+    - Kateryna
+    - Liam
+    - Mykola
+    - Noah
+    - Orest
+    - Petro
 
 github:
   fetch_issues: true

@@ -122,6 +122,7 @@ def clean_environment(tmp_path, short_tmp, monkeypatch):
     monkeypatch.delenv("HIVE_WORKTREES_SKIP_PERMISSIONS", raising=False)
     monkeypatch.delenv("HIVE_ZELLIJ_LAYOUT", raising=False)
     monkeypatch.delenv("HIVE_ZELLIJ_SESSION_NAME", raising=False)
+    monkeypatch.delenv("HIVE_ZELLIJ_PANE_LABELS", raising=False)
     monkeypatch.delenv("HIVE_GITHUB_FETCH_ISSUES", raising=False)
     monkeypatch.delenv("HIVE_GITHUB_ISSUE_LIMIT", raising=False)
 

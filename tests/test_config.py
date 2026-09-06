@@ -355,6 +355,30 @@ agents:
         assert config.github.issue_limit == 50
 
 
+class TestPaneLabels:
+    def test_default_pane_labels_match_bundled_layout(self):
+        """zellij.pane_labels must be the c1..c16 names from the bundled layout."""
+        import re
+        from pathlib import Path
+
+        from hive_cli.config import get_settings
+        from hive_cli.layout.resolve import resolve_layout
+
+        kdl = Path(resolve_layout("agent")).read_text()
+        found = re.findall(r'pane name="c(\d+): ([^"]+)"', kdl)
+        by_number = {int(n): label for n, label in found}
+        expected = [by_number[n] for n in sorted(by_number)]
+        assert get_settings().zellij.pane_labels == expected
+        assert len(expected) == 16
+
+    def test_pane_labels_env_csv(self, monkeypatch):
+        from hive_cli.config import get_settings, reset_settings
+
+        monkeypatch.setenv("HIVE_ZELLIJ_PANE_LABELS", "Ann,Bob")
+        reset_settings()
+        assert get_settings().zellij.pane_labels == ["Ann", "Bob"]
+
+
 class TestAgentConfig:
     """Tests for agent-specific configuration."""
 
