@@ -233,17 +233,20 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0 status and divergences from this doc
+## A0/F0 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
-and moved the codebase into it. It did not build the F0–F6 features the
-package map anticipates — the `[F1]`/`[F3]`/`[F4]`/`[F5]`/`[F6]` entries, and
-untagged-but-still-missing pieces (`core/models.py`, `state/protocol.py`,
-`state/server.py`, `state/client.py`, `mux/base.py`, `layout/model.py`,
-`layout/tabs.py`, `layout/keybinds.py`, `services/facts.py`,
-`services/watch.py`) don't exist yet. `services/aio.py` and
+and moved the codebase into it. F0 (done 2026-09-06) added the pane state
+layer and the multiplexer protocol: `state/protocol.py`, `state/server.py`,
+`state/client.py`, `mux/base.py`, `mux/__init__.py:get_mux()`, the
+`ZellijMux` backend, `services/pane.py`'s `PaneContext`/`open_pane_context`/
+`run_agent`, and `zellij.pane_labels`. Still missing are the `[F1]`/`[F2]`/
+`[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces `core/models.py`,
+`layout/model.py`, `layout/tabs.py`, `layout/keybinds.py`,
+`services/facts.py`, `services/watch.py`. `services/aio.py` and
 `services/registry.py` exist as unwired stubs (`registry._MODULES = ()`, so
-`load_all()` is currently a no-op) — a later feature finishes hooking them up.
+`load_all()` is currently a no-op) — a later feature finishes hooking them
+up.
 
 Three deliberate additions to `tests/test_architecture.py:SUBPROCESS_OK`
 beyond the A0 spec's own copy of that list, each an existing behavior moved
@@ -257,11 +260,32 @@ as-is rather than a new use of `subprocess`:
   terminal for interactive diff paging, not captured.
 
 `commands/session.py` is also pre-listed in `SUBPROCESS_OK`; the file itself
-is `[F3]` work and doesn't exist yet.
+is `[F3]` work and doesn't exist yet. `mux/zellij/backend.py` is listed too
+but no longer imports `subprocess` (every call goes through `proc.run`).
 
-`state/legacy_files.py` (JSON pane-state file read/write) is an A0-only
-interim shim for the pre-socket world; per `F0-state-and-mux.md` it is
-deleted once `state/server.py`/`client.py` land.
+F0 divergences from the package map and the F0 spec, all deliberate:
+
+- **No `agents/launch.build_command() → Launch`.** A0 kept `commands/run.py`'s
+  argv assembly and `services/pane.run_with_resume(...)`'s positional
+  signature; F0 threads a `PaneContext` through them (`ctx=`) instead of
+  introducing `Launch`. `run_loop(command, pick, ..., ctx=None)` opens the
+  context when not given and always closes it; `run_agent(argv, env, ctx)`
+  is the one Popen+wait.
+- **`hive wt exec` is not an agent pane.** It calls `run_in_worktree` with
+  `pane.null_context()`, so it never self-assigns a pane number nor serves a
+  socket (the bundled layout's `neovim` pane runs through it).
+- **`ZellijMux.new_pane` uses `--tab-id` and `--no-focus`.** The spec
+  claimed 0.45.1 lacked both; `zellij action new-pane --help` on 0.45.1 has
+  them and a live probe confirmed `--tab-id` works, so there is no
+  `go-to-tab-by-id` detour. `list-panes --all --json` reports integer
+  `id`/`tab_id` (normalised to strings), `is_held` for start-suspended panes
+  and `pane_cwd`/`pane_command` only for running panes.
+- **`services/session.start(session=, mux=)`** owns the stale socket-dir
+  cleanup (`clean_stale_sock_dir`) rather than `commands/zellij.py`.
+- **`RuntimeSettings.pane_sock`** is a mutable field (read from
+  `HIVE_PANE_SOCK`, derived by an after-validator only when both
+  `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID` are actually in the env), not a
+  pure computed property, because `open_pane_context` assigns it.
 
 One accepted cosmetic deviation: `services/worktrees.py:_setup_file`'s
 messages moved from a direct `warn()` call to a `progress` callback,

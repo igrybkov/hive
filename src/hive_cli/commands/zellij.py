@@ -13,6 +13,7 @@ from ..agents import detect_agent
 from ..config import KNOWN_AGENTS, get_runtime_settings, get_settings
 from ..git.repo import change_to_main_repo, get_session_name
 from ..layout.resolve import resolve_layout
+from ..mux import get_mux
 from ..mux.zellij.backend import set_pane_custom_title, set_pane_status
 from ..services import session
 from ..ui.console import error, format_yellow
@@ -106,6 +107,8 @@ def zellij(
     session.start(
         cmd,
         child_env,
+        session=full_session_name,
+        mux=get_mux("zellij"),
         restart=restart,
         restart_delay=restart_delay,
         on_restart=on_restart,

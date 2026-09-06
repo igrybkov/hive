@@ -11,11 +11,14 @@ entirely via `execvpe` -- there is no captured output to return, matching
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
 
+from ..core import paths
 from ..layout.resolve import resolve_layout
+from ..mux.base import Mux
 
 
 def session_name(template: str, *, repo: str, agent: str) -> str:
@@ -40,10 +43,23 @@ def attach_argv(layout: str | None, full_session_name: str) -> list[str]:
     return cmd
 
 
+def clean_stale_sock_dir(mux: Mux | None, session: str) -> None:
+    """Remove the session's pane-socket dir when no such session is running.
+
+    Sockets of a session that died with its `hive run`s (machine reboot,
+    `zellij kill-session`) would otherwise linger; a live session keeps its
+    dir since its panes are serving.
+    """
+    if mux is not None and not mux.session_exists(session):
+        shutil.rmtree(paths.session_sock_dir(session), ignore_errors=True)
+
+
 def start(
     cmd: list[str],
     env: dict[str, str],
     *,
+    session: str,
+    mux: Mux | None,
     restart: bool,
     restart_delay: float,
     on_restart: Callable[[], None],
@@ -54,11 +70,14 @@ def start(
     Args:
         cmd: The `zellij ... attach --create <session>` argv.
         env: Child environment.
+        session: The full session name (for stale pane-socket cleanup).
+        mux: The multiplexer backend (None skips the cleanup).
         restart: Auto-restart zellij after it exits.
         restart_delay: Seconds to wait between restarts.
         on_restart: Called after zellij exits, before each restart.
         on_stop: Called on Ctrl+C while restart-looping.
     """
+    clean_stale_sock_dir(mux, session)
     if not restart:
         os.execvpe("zellij", cmd, env)
         return

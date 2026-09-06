@@ -68,6 +68,20 @@ HIVE_AGENT_PROFILE=work hive run  # Via env var
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 - `-p, --profile TEXT`: Agent config profile to use (see [Config Profiles](#config-profiles))
 
+#### Pane state sockets
+
+Inside a Zellij session every `hive run` serves its pane's state on a Unix
+socket at `$XDG_RUNTIME_DIR/hive/<session>/<pane>.sock` (or
+`/tmp/hive-$UID/hive/<session>/<pane>.sock` when `XDG_RUNTIME_DIR` is unset)
+and removes it when it exits. The state is one JSON object — pane and tab
+ids, pane number and label, agent, profile, branch, worktree path, status
+(`selecting`, `starting`, `running`, `busy`, `waiting`, `idle`, `done`,
+`exited`), agent pid — and it drives the pane title and the tab name. Read it
+with `nc -U <socket>`: the first line is the current state; send
+`{"op":"subscribe"}` to follow changes, or
+`{"op":"set","fields":{"status_text":"[x]"}}` to change it, which is what
+`hive zellij set-status` does.
+
 ### `hive zellij`
 
 Open Zellij with an AI agent layout.
@@ -470,6 +484,10 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_ZELLIJ_SESSION_NAME`        | string  | Session name template                          |
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
 | `HIVE_GITHUB_ISSUE_LIMIT`         | integer | Max issues to fetch                            |
+| `HIVE_MUX_BACKEND`                | string  | Multiplexer backend (`zellij`) instead of auto-detection |
+| `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
+| `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels` when self-assigned |
+| `HIVE_PANE_SOCK`                  | path    | Pane-state socket served by this pane's `hive run` (exported to the agent) |
 
 **Legacy variables** (still supported, lower precedence than `HIVE_*`):
 
