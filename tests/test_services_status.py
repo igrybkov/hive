@@ -66,3 +66,44 @@ class TestCollectStatus:
         assert by_branch["feat"].is_dirty is True
         assert by_branch["feat"].is_main is False
         assert by_branch["feat"].task == "the assigned task"
+
+
+WORKTREE_LIST = """\
+worktree {main}
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree {main}-feat-a
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feat-a
+
+worktree {main}-feat-b
+HEAD 3333333333333333333333333333333333333333
+branch refs/heads/feat-b
+
+"""
+
+
+class TestCollectStatusSpawnBudget:
+    def test_one_list_plus_two_per_worktree(self, fake_proc, tmp_path):
+        main = tmp_path / "repo"
+        main.mkdir()
+        fake_proc.script(
+            ("git", "worktree", "list"), stdout=WORKTREE_LIST.format(main=main)
+        )
+        fake_proc.script(
+            ("git", "status"), stdout="# branch.head feat\n# branch.ab +1 -0\n? x\n"
+        )
+        fake_proc.script(("git", "log"), stdout="abc\x00msg\x00now\n")
+
+        statuses = collect_status(main)
+
+        assert [s.branch for s in statuses] == ["feat", "feat-a", "feat-b"]
+        assert len(fake_proc.calls) <= 1 + 2 * 3
+        assert all(s.is_dirty and s.ahead == 1 for s in statuses)
+        assert statuses[0].is_main and statuses[0].agent_id == "1"
+
+    def test_main_branch_falls_back_when_detached(self, fake_proc, tmp_path):
+        fake_proc.script(("git", "status"), stdout="# branch.head (detached)\n")
+        statuses = collect_status(tmp_path)
+        assert statuses[0].branch == "main"

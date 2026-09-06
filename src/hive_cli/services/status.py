@@ -10,13 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..git import (
-    get_current_branch,
-    is_worktree_dirty,
-    last_commit_summary,
-    list_worktrees,
-    upstream_ahead_behind,
-)
+from ..git import git_summary, list_worktrees
 
 
 @dataclass
@@ -65,6 +59,8 @@ def _get_task(main_repo: Path, agent_id: str) -> str | None:
 def collect_status(main_repo: Path) -> list[AgentStatus]:
     """Collect status for every agent worktree under main_repo.
 
+    One `git worktree list` plus two commands per worktree (`git_summary`).
+
     Args:
         main_repo: Path to main repository.
 
@@ -72,37 +68,28 @@ def collect_status(main_repo: Path) -> list[AgentStatus]:
         List of AgentStatus objects.
     """
     statuses: list[AgentStatus] = []
-    worktrees = list_worktrees(main_repo)
-
-    for wt in worktrees:
+    for wt in list_worktrees(main_repo):
+        summary = git_summary(wt.path)
         if wt.is_main:
             agent_id = "1"
-            # For main repo, check if on non-default branch
-            current = get_current_branch(wt.path)
-            branch = current if current else "main"
+            branch = summary.branch or "main"  # detached HEAD shows as main
         else:
-            # Use branch name as agent ID
             agent_id = wt.branch
             branch = wt.branch
-
-        ahead, behind = upstream_ahead_behind(wt.path)
-        commit_hash, commit_msg = last_commit_summary(wt.path)
-
         statuses.append(
             AgentStatus(
                 agent_id=agent_id,
                 path=wt.path,
                 branch=branch,
                 is_main=wt.is_main,
-                is_dirty=is_worktree_dirty(wt.path),
-                ahead=ahead,
-                behind=behind,
-                last_commit_hash=commit_hash,
-                last_commit_msg=commit_msg,
+                is_dirty=summary.dirty,
+                ahead=summary.ahead,
+                behind=summary.behind,
+                last_commit_hash=summary.last_hash,
+                last_commit_msg=summary.last_subject[:50],
                 task=_get_task(main_repo, agent_id),
             )
         )
-
     return statuses
 
 

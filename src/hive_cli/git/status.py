@@ -27,66 +27,89 @@ class CommitInfo:
     date: str
 
 
-def upstream_ahead_behind(path: Path) -> tuple[int, int]:
-    """Commits ahead/behind the worktree's tracked ``@{upstream}``.
+@dataclass(frozen=True)
+class GitSummary:
+    """Everything `hive status` and the picker need about one worktree.
 
-    Not a duplicate of ``analysis.commits_ahead_behind()``, which compares
-    against a fixed ``origin/{default_branch}`` instead of the branch's own
-    tracked upstream.
-
-    Args:
-        path: Path to the worktree.
-
-    Returns:
-        Tuple of (ahead, behind) counts.
+    Produced by `git_summary` from exactly two commands; `branch` is "" when
+    detached and `upstream` is "" when the branch tracks nothing (then
+    ahead/behind are 0).
     """
-    result = proc.run(
-        ["git", "-C", str(path), "rev-parse", "--abbrev-ref", "@{upstream}"],
-        timeout=10,
-    )
-    if not result.ok:
-        return 0, 0
-    upstream = result.stdout.strip()
 
-    result = proc.run(
-        ["git", "-C", str(path), "rev-list", "--count", f"{upstream}..HEAD"],
-        timeout=10,
-    )
-    try:
-        ahead = int(result.stdout.strip()) if result.ok else 0
-    except ValueError:
-        ahead = 0
+    branch: str
+    upstream: str
+    ahead: int
+    behind: int
+    staged: int
+    modified: int
+    untracked: int
+    conflicted: int
+    last_hash: str  # short
+    last_subject: str
+    last_age: str  # git's %cr, e.g. "3 hours ago"
 
-    result = proc.run(
-        ["git", "-C", str(path), "rev-list", "--count", f"HEAD..{upstream}"],
-        timeout=10,
-    )
-    try:
-        behind = int(result.stdout.strip()) if result.ok else 0
-    except ValueError:
-        behind = 0
-
-    return ahead, behind
+    @property
+    def dirty(self) -> bool:
+        return bool(self.staged or self.modified or self.untracked or self.conflicted)
 
 
-def last_commit_summary(path: Path) -> tuple[str, str]:
-    """Short hash and truncated subject line of a worktree's last commit.
+def _parse_branch_header(line: str, head: dict[str, object]) -> None:
+    """One `# branch.*` line of porcelain v2 into the `head` dict."""
+    key, _, value = line[2:].partition(" ")
+    if key == "branch.head":
+        head["branch"] = "" if value == "(detached)" else value
+    elif key == "branch.upstream":
+        head["upstream"] = value
+    elif key == "branch.ab":
+        ahead, _, behind = value.partition(" ")
+        head["ahead"] = int(ahead.lstrip("+") or 0)
+        head["behind"] = int(behind.lstrip("-") or 0)
 
-    Args:
-        path: Path to the worktree.
 
-    Returns:
-        Tuple of (short_hash, message).
+def parse_porcelain_v2(text: str) -> tuple[str, str, int, int, int, int, int, int]:
+    """Pure parser for `git status --porcelain=v2 --branch` output.
+
+    Returns (branch, upstream, ahead, behind, staged, modified, untracked,
+    conflicted). Entry kinds: `1` ordinary, `2` rename/copy (XY: index then
+    worktree status, "." = unchanged), `u` unmerged, `?` untracked, `!`
+    ignored (not counted).
     """
-    result = proc.run(
-        ["git", "-C", str(path), "log", "-1", "--format=%h\t%s"], timeout=10
+    head: dict[str, object] = {"branch": "", "upstream": "", "ahead": 0, "behind": 0}
+    staged = modified = untracked = conflicted = 0
+    for line in text.splitlines():
+        if line.startswith("# "):
+            _parse_branch_header(line, head)
+        elif line.startswith(("1 ", "2 ")):
+            xy = line[2:4]
+            staged += xy[0] != "."
+            modified += xy[1] != "."
+        elif line.startswith("u "):
+            conflicted += 1
+        elif line.startswith("? "):
+            untracked += 1
+    return (
+        str(head["branch"]),
+        str(head["upstream"]),
+        int(head["ahead"]),  # type: ignore[call-overload]
+        int(head["behind"]),  # type: ignore[call-overload]
+        staged,
+        modified,
+        untracked,
+        conflicted,
     )
-    if not result.ok:
-        return "", ""
-    parts = result.stdout.strip().split("\t", 1)
-    if len(parts) == 2:
-        return parts[0], parts[1][:50]
-    return parts[0] if parts else "", ""
+
+
+def git_summary(path: Path) -> GitSummary:
+    """Exactly two spawns: `status --porcelain=v2 --branch` and `log -1`."""
+    status = proc.run(["git", "status", "--porcelain=v2", "--branch"], cwd=path)
+    log = proc.run(["git", "log", "-1", "--format=%h%x00%s%x00%cr"], cwd=path)
+    parsed = parse_porcelain_v2(status.stdout if status.ok else "")
+    last_hash = last_subject = last_age = ""
+    if log.ok:
+        parts = log.stdout.strip("\n").split("\x00")
+        if len(parts) == 3:
+            last_hash, last_subject, last_age = parts
+    return GitSummary(*parsed, last_hash, last_subject, last_age)
 
 
 def _classify_status_line(line: str, detail: GitStatusDetail) -> None:

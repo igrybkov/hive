@@ -87,10 +87,7 @@ def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
 
     worktrees = [WorktreeInfo(branch="main", path=main_repo, is_main=True)]
 
-    result = proc.run(
-        ["git", "-C", str(main_repo), "worktree", "list", "--porcelain"],
-        timeout=10,
-    )
+    result = proc.run(["git", "worktree", "list", "--porcelain"], cwd=main_repo)
     if not result.ok:
         return worktrees
 
