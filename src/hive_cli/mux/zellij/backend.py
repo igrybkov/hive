@@ -97,15 +97,14 @@ def rebuild_pane_title() -> bool:
     state = legacy_files.read_state(session, zellij_pane_id)
 
     title = pane_state.compose_title(
-        pane_id=rt.pane_id,
-        pane_label=rt.pane_label,
-        agent=rt.agent,
-        zellij_pane_id=zellij_pane_id,
-        status=state.get("status"),
-        branch=state.get("branch"),
-        custom_title=state.get("custom_title"),
+        hive_pane_id=rt.pane_id_int,
+        label=rt.pane_label or "",
+        agent=rt.agent or "",
+        mux_pane_id=zellij_pane_id,
+        status_text=state.get("status") or "",
+        branch=state.get("branch") or "",
+        custom_title=state.get("custom_title") or "",
         cwd=Path.cwd(),
-        home=Path.home(),
     )
     rename_pane(title)
     return True
