@@ -13,9 +13,9 @@ from rich.console import Console
 from ..config import get_runtime_settings
 from ..git import get_git_root, get_main_repo, get_worktree_path
 from ..services import pane
+from ..ui.pickers.worktrees import pick_worktree
 from ..utils import error, format_yellow, is_interactive
 from ..utils.zellij import set_pane_branch
-from .wt import _interactive_ensure
 
 console = Console()
 
@@ -48,7 +48,7 @@ def select_and_change_to_worktree(
             error("Interactive mode required for worktree selection")
             sys.exit(1)
         agent_num = get_runtime_settings().pane_id_int
-        result = _interactive_ensure(
+        result = pick_worktree(
             agent_num=agent_num,
             preselect_branch=last_selected_branch,
             auto_select_branch=auto_select_branch,

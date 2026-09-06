@@ -11,12 +11,9 @@ home is mux/state, Step 9 -- not worth a temporary cross-layer import
 here).
 
 `select_and_change_to_worktree` stays resident in commands/exec_runner.py:
-it calls commands/wt.py:_interactive_ensure, which carries a pre-existing
-complexipy violation fixed only when wt.py gets its own dedicated
-whole-file pass later. run_in_worktree passes it in as `pick`, matching
-the move-map's eventual `pick`-callable shape (built properly in
-ui/flows/worktrees.py once that package exists, Step 7) without forcing
-wt.py open early.
+it calls ui/pickers/worktrees.py:pick_worktree (the wt.py pass's renamed,
+complexipy-clean `_interactive_ensure`). run_in_worktree passes it in as
+`pick`.
 """
 
 from __future__ import annotations

@@ -117,8 +117,12 @@ class TestBuildFuzzyItem:
 
 class TestDeleteWorktreeFlow:
     @pytest.mark.parametrize("branch", ["main", "master", "1", "ghost-branch"])
-    def test_returns_false_without_a_valid_worktree(self, temp_git_repo: Path, branch):
+    def test_returns_false_without_a_valid_worktree(
+        self, temp_git_repo: Path, branch, mocker
+    ):
+        mock_confirm = mocker.patch("hive_cli.ui.pickers.status.confirm")
         assert _delete_worktree_flow(branch, temp_git_repo) is False
+        mock_confirm.assert_not_called()
 
     @pytest.mark.parametrize("confirmed", [True, False])
     def test_confirm_result_drives_deletion(
@@ -135,7 +139,7 @@ class TestDeleteWorktreeFlow:
         make_worktree("feat")
         mocker.patch("hive_cli.ui.pickers.status.confirm", return_value=True)
         mocker.patch(
-            "hive_cli.ui.pickers.status.delete_worktree", side_effect=RuntimeError("x")
+            "hive_cli.services.worktrees.delete_worktree", side_effect=RuntimeError("x")
         )
         assert _delete_worktree_flow("feat", temp_git_repo) is False
 

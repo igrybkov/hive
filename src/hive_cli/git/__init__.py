@@ -12,6 +12,16 @@ from .analysis import (
     show_diff_with_delta,
     simulate_merge,
 )
+from .github import (
+    GitHubIssue,
+    GitHubIssueDetails,
+    fetch_issue_details,
+    fetch_issues,
+    get_github_repo_info,
+    get_issues_cache_path,
+    load_cached_issues,
+    save_cached_issues,
+)
 from .repo import get_current_worktree_branch, get_git_root, get_main_repo
 from .status import (
     CommitInfo,
@@ -38,6 +48,8 @@ from .worktree_paths import expand_path, get_worktrees_base, sanitize_branch_nam
 
 __all__ = [
     "CommitInfo",
+    "GitHubIssue",
+    "GitHubIssueDetails",
     "GitStatusDetail",
     "HIVE_MANAGED_FILES",
     "MergeSimulation",
@@ -48,6 +60,8 @@ __all__ = [
     "delete_worktree",
     "expand_path",
     "fetch_branch",
+    "fetch_issue_details",
+    "fetch_issues",
     "fetch_origin",
     "get_all_branches",
     "get_current_branch",
@@ -56,6 +70,8 @@ __all__ = [
     "get_diff",
     "get_git_root",
     "get_git_status_detail",
+    "get_github_repo_info",
+    "get_issues_cache_path",
     "get_main_repo",
     "get_recent_commits",
     "get_worktree_path",
@@ -64,8 +80,10 @@ __all__ = [
     "is_worktree_dirty",
     "last_commit_summary",
     "list_worktrees",
+    "load_cached_issues",
     "merge_changed_files",
     "sanitize_branch_name",
+    "save_cached_issues",
     "show_diff_with_delta",
     "simulate_merge",
     "upstream_ahead_behind",

@@ -159,7 +159,7 @@ class TestWorktreeExistsReal:
 
 class TestIsWorktreeDirty:
     def test_clean_worktree_is_not_dirty(self, make_worktree):
-        # create_worktree()'s .claude/HANDOFF.md symlink is deliberately added
+        # make_worktree's .claude/HANDOFF.md symlink is deliberately added
         # to the repo's info/exclude (see handoffs._exclude_from_git), so a
         # freshly created worktree is genuinely clean, not just "clean but
         # for an untracked file we happen to ignore in this assertion".
@@ -314,15 +314,6 @@ class TestDeleteWorktree:
 
         assert not wt_path.exists()
         assert worktree_exists("feat-a", temp_git_repo) is False
-
-
-class TestCreateWorktreeSetsUpHandoffSymlink:
-    def test_claude_dir_symlink_present(self, temp_git_repo, isolated_worktrees):
-        """create_worktree wires up the handoff symlink via handoffs module."""
-        path = create_worktree("feat-a", temp_git_repo)
-        # setup_handoff_symlink creates .claude/HANDOFF.md as a symlink into
-        # the central handoffs dir; just assert create_worktree didn't skip it.
-        assert (path / ".claude").exists()
 
 
 class TestCommitFileHelper:

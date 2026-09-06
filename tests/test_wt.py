@@ -169,7 +169,7 @@ class TestProfilePickerIntegration:
 
     def test_action_change_profile_sentinel_defined(self):
         """ACTION_CHANGE_PROFILE sentinel is defined and distinct from others."""
-        from hive_cli.commands.wt import (
+        from hive_cli.ui.pickers.worktrees import (
             ACTION_CHANGE_AGENT,
             ACTION_CHANGE_PROFILE,
             ACTION_CHANGE_WORKDIR,

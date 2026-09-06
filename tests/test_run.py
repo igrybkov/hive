@@ -420,7 +420,7 @@ class TestRunRestart:
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
-                "hive_cli.commands.exec_runner._interactive_ensure",
+                "hive_cli.commands.exec_runner.pick_worktree",
                 return_value=(str(temp_git_repo), "test-branch"),
             ) as mock_ensure,
             patch("hive_cli.commands.exec_runner.subprocess.run") as mock_run,
@@ -429,7 +429,7 @@ class TestRunRestart:
             # Simulate KeyboardInterrupt to exit the restart loop
             mock_run.side_effect = KeyboardInterrupt
             result = cli_runner.invoke(app, ["run", "-a", "claude", "--restart"])
-            # Should have called _interactive_ensure for worktree selection
+            # Should have called pick_worktree for worktree selection
             mock_ensure.assert_called_once_with(
                 agent_num=0,
                 preselect_branch=None,
@@ -465,7 +465,7 @@ class TestRunRestart:
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
-                "hive_cli.commands.exec_runner._interactive_ensure",
+                "hive_cli.commands.exec_runner.pick_worktree",
                 return_value=(str(temp_git_repo), "test-branch"),
             ) as mock_ensure,
             patch(
@@ -475,7 +475,7 @@ class TestRunRestart:
             patch("hive_cli.commands.exec_runner.is_interactive", return_value=True),
         ):
             result = cli_runner.invoke(app, ["run", "-a", "claude", "--restart"])
-            # Should have called _interactive_ensure at least once
+            # Should have called pick_worktree at least once
             assert mock_ensure.call_count >= 1
             # First call has no preselect
             first_call_kwargs = mock_ensure.call_args_list[0][1]
@@ -511,7 +511,7 @@ class TestRunRestart:
                 return_value=temp_git_repo,
             ),
             patch(
-                "hive_cli.commands.exec_runner._interactive_ensure",
+                "hive_cli.commands.exec_runner.pick_worktree",
                 return_value=(str(temp_git_repo), "main"),
             ) as mock_ensure,
             patch("hive_cli.commands.exec_runner.subprocess.run") as mock_run,
@@ -521,7 +521,7 @@ class TestRunRestart:
             result = cli_runner.invoke(
                 app, ["run", "-a", "claude", "--restart", "-w", "main"]
             )
-            # Should NOT have called _interactive_ensure
+            # Should NOT have called pick_worktree
             mock_ensure.assert_not_called()
             assert result.exit_code == 0
 

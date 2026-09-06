@@ -6,12 +6,19 @@ service functions. `_show_task`/`show_all_tasks`/`show_task` print, so
 they stay in commands/task.py; `write_task`/`ensure_task_template`/
 `delete_task` are new names for the non-printing halves of
 `set_task`/`edit_task`/`clear_task`.
+
+`write_task_file` (moved from commands/wt.py, A0 wt.py pass) is a distinct
+concept: it writes a single `.claude/task.local.md` from a GitHub issue when
+a worktree is created for that issue, vs. the per-agent-number `task_file`
+above used by `hive task`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+
+from ..git.github import GitHubIssueDetails
 
 
 def get_tasks_dir(main_repo: Path) -> Path:
@@ -128,3 +135,25 @@ def delete_task(main_repo: Path, agent_id: str) -> bool:
         task_file.unlink()
         return True
     return False
+
+
+def write_task_file(worktree_path: Path, issue: GitHubIssueDetails) -> None:
+    """Write issue details to .claude/task.local.md in the worktree.
+
+    Args:
+        worktree_path: Path to the worktree.
+        issue: GitHub issue details.
+    """
+    claude_dir = worktree_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    task_file = claude_dir / "task.local.md"
+    content = f"""# Task: {issue.title}
+
+**Issue:** [#{issue.number}]({issue.url})
+
+## Description
+
+{issue.body if issue.body else "_No description provided._"}
+"""
+    task_file.write_text(content)

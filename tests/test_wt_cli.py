@@ -171,7 +171,7 @@ class TestWtExecCliErrors:
 
 
 # ---------------------------------------------------------------------------
-# CLI: cd / ensure interactive branches (with _interactive_ensure mocked)
+# CLI: cd / ensure interactive branches (with pick_worktree mocked)
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ class TestWtInteractiveBranches:
         with (
             patch("hive_cli.commands.wt.is_interactive", return_value=True),
             patch(
-                "hive_cli.commands.wt._interactive_ensure",
+                "hive_cli.commands.wt.pick_worktree",
                 return_value=(target, "feat-a"),
             ),
         ):
@@ -193,7 +193,7 @@ class TestWtInteractiveBranches:
     def test_cd_interactive_cancelled(self, cli_runner, temp_git_repo):
         with (
             patch("hive_cli.commands.wt.is_interactive", return_value=True),
-            patch("hive_cli.commands.wt._interactive_ensure", return_value=None),
+            patch("hive_cli.commands.wt.pick_worktree", return_value=None),
         ):
             result = cli_runner.invoke(app, ["wt", "cd"])
 
@@ -206,7 +206,7 @@ class TestWtInteractiveBranches:
         with (
             patch("hive_cli.commands.wt.is_interactive", return_value=True),
             patch(
-                "hive_cli.commands.wt._interactive_ensure",
+                "hive_cli.commands.wt.pick_worktree",
                 return_value=(target, "feat-a"),
             ),
         ):
@@ -218,7 +218,7 @@ class TestWtInteractiveBranches:
     def test_ensure_agent_2_interactive_cancelled(self, cli_runner, temp_git_repo):
         with (
             patch("hive_cli.commands.wt.is_interactive", return_value=True),
-            patch("hive_cli.commands.wt._interactive_ensure", return_value=None),
+            patch("hive_cli.commands.wt.pick_worktree", return_value=None),
         ):
             result = cli_runner.invoke(app, ["wt", "ensure", "2"])
 

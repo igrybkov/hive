@@ -12,12 +12,18 @@ import stat
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from hive_cli.config import reload_config
+from hive_cli.git import get_current_branch, worktree_exists
 from hive_cli.services.worktrees import (
     detect_package_manager,
     ensure_mise_trusted,
     install_dependencies,
+    provision,
+    remove,
     run_post_create_commands,
+    setup_agent_context,
 )
 
 # ---------------------------------------------------------------------------
@@ -217,3 +223,102 @@ class TestEnsureMiseTrusted:
         (project / ".tool-versions").write_text("")
 
         assert ensure_mise_trusted(project) is False
+
+
+# ---------------------------------------------------------------------------
+# setup_agent_context
+# ---------------------------------------------------------------------------
+
+
+class TestSetupAgentContext:
+    def test_writes_context_file(self, tmp_path):
+        setup_agent_context(tmp_path, agent_num=3, branch_name="feat-x")
+
+        content = (tmp_path / ".claude" / "worktree-context.md").read_text()
+        assert "Agent 3" in content
+        assert "feat-x" in content
+        assert str(tmp_path) in content
+
+
+# ---------------------------------------------------------------------------
+# provision
+# ---------------------------------------------------------------------------
+
+
+class TestProvision:
+    def test_creates_worktree_and_symlinks_handoff(
+        self, temp_git_repo, isolated_worktrees
+    ):
+        progress_lines: list[str] = []
+
+        path = provision("feat-a", temp_git_repo, progress=progress_lines.append)
+
+        assert path.exists()
+        assert get_current_branch(path) == "feat-a"
+        # setup_handoff_symlink creates .claude/HANDOFF.md as a symlink into
+        # the central handoffs dir; just assert provision() didn't skip it.
+        assert (path / ".claude" / "HANDOFF.md").is_symlink()
+        assert any("Creating worktree" in line for line in progress_lines)
+        assert any("Created worktree" in line for line in progress_lines)
+
+    def test_agent_context_written_when_agent_num_positive(
+        self, temp_git_repo, isolated_worktrees
+    ):
+        path = provision("feat-a", temp_git_repo, agent_num=2)
+
+        context_file = path / ".claude" / "worktree-context.md"
+        assert context_file.exists()
+        assert "Agent 2" in context_file.read_text()
+
+    def test_no_agent_context_when_agent_num_zero(
+        self, temp_git_repo, isolated_worktrees
+    ):
+        path = provision("feat-a", temp_git_repo, agent_num=0)
+
+        assert not (path / ".claude" / "worktree-context.md").exists()
+
+    def test_raises_for_main_branch(self, temp_git_repo, isolated_worktrees):
+        # provision() lets create_worktree()'s exceptions propagate; the
+        # caller (a ui/flows/worktrees.py flow) owns the try/except.
+        with pytest.raises(ValueError, match="main branch"):
+            provision("main", temp_git_repo)
+
+
+# ---------------------------------------------------------------------------
+# remove
+# ---------------------------------------------------------------------------
+
+
+class TestRemove:
+    def test_confirmed_deletes_worktree(self, temp_git_repo, make_worktree):
+        wt_path = make_worktree("feat-a")
+
+        deleted, error = remove("feat-a", temp_git_repo, confirmed=True)
+
+        assert deleted is True
+        assert error is None
+        assert not wt_path.exists()
+        assert worktree_exists("feat-a", temp_git_repo) is False
+
+    def test_not_confirmed_is_a_noop(self, temp_git_repo, make_worktree):
+        wt_path = make_worktree("feat-a")
+
+        deleted, error = remove("feat-a", temp_git_repo, confirmed=False)
+
+        assert deleted is False
+        assert error is None
+        assert wt_path.exists()
+
+    def test_failure_is_reported_not_raised(self, temp_git_repo, make_worktree):
+        wt_path = make_worktree("feat-a")
+
+        with patch(
+            "hive_cli.services.worktrees.delete_worktree",
+            side_effect=RuntimeError("boom"),
+        ):
+            deleted, error = remove("feat-a", temp_git_repo, confirmed=True)
+
+        assert deleted is False
+        assert error == "boom"
+        # delete_worktree was mocked, so the real worktree is untouched.
+        assert wt_path.exists()

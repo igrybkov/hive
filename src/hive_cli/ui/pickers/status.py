@@ -12,7 +12,6 @@ from pathlib import Path
 from rich.text import Text
 
 from ...git import (
-    delete_worktree,
     get_git_status_detail,
     get_main_repo,
     get_recent_commits,
@@ -21,6 +20,7 @@ from ...git import (
 )
 from ...services import editors
 from ...services import status as service_status
+from ...services import worktrees as worktrees_service
 from ...services.status import AgentStatus
 from ...utils import select_editor
 from ..console import error, warn
@@ -312,20 +312,16 @@ def _delete_worktree_flow(branch: str, main_repo: Path) -> bool:
         warn(f"No worktree exists for '{branch}'")
         return False
 
-    is_dirty = is_worktree_dirty(path)
-
-    if is_dirty:
+    if is_worktree_dirty(path):
         error("Uncommitted changes will be lost!")
 
-    if confirm(f"Delete worktree '{branch}'?"):
-        try:
-            delete_worktree(path, force=True)
-            console.print(f"[green]Worktree '{branch}' deleted[/]")
-            return True
-        except Exception as e:
-            error(f"Failed to delete: {e}")
-            return False
-
+    confirmed = confirm(f"Delete worktree '{branch}'?")
+    deleted, err = worktrees_service.remove(branch, main_repo, confirmed=confirmed)
+    if deleted:
+        console.print(f"[green]Worktree '{branch}' deleted[/]")
+        return True
+    if err:
+        error(f"Failed to delete: {err}")
     return False
 
 

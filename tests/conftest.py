@@ -303,16 +303,59 @@ def fake_proc(monkeypatch) -> FakeProc:
     return fp
 
 
+class FakeGh:
+    """Fakes only `gh`-prefixed core.proc.run calls; every other argv (git,
+    etc.) runs for real. Use this instead of fake_proc whenever a test needs
+    a real git repo/remote alongside a scripted `gh` response -- the hard
+    rule elsewhere in this suite is "never mock git".
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.scripts: list[tuple[tuple[str, ...], Scripted]] = []
+
+    def script(self, prefix, *, stdout="", stderr="", returncode=0):
+        self.scripts.append((tuple(prefix), Scripted(stdout, stderr, returncode)))
+
+    def count(self, *prefix: str) -> int:
+        return sum(1 for c in self.calls if tuple(c[: len(prefix)]) == prefix)
+
+
+@pytest.fixture
+def fake_gh(monkeypatch) -> FakeGh:
+    from hive_cli.core import proc
+
+    real_run = proc.run
+    fg = FakeGh()
+
+    def run(argv, **kwargs):
+        argv = [str(a) for a in argv]
+        if argv[0] != "gh":
+            return real_run(argv, **kwargs)
+        fg.calls.append(argv)
+        for prefix, s in fg.scripts:
+            if tuple(argv[: len(prefix)]) == prefix:
+                return proc.Result(tuple(argv), s.returncode, s.stdout, s.stderr)
+        return proc.Result(tuple(argv), 1, "", "gh: no script matched")
+
+    monkeypatch.setattr("hive_cli.core.proc.run", run)
+    return fg
+
+
 @pytest.fixture
 def make_worktree(temp_git_repo: Path, isolated_worktrees: Path):
     """Factory: ``make_worktree("feat")`` creates a real worktree and returns its path.
 
-    Uses hive's own ``create_worktree`` so handoff symlinks and path templates
+    Uses hive's own ``create_worktree`` (path templates) plus
+    ``setup_handoff_symlink`` (same two calls `wt create` makes) so worktrees
     behave exactly as in production. The branch is created from ``main``.
     """
     from hive_cli.git import create_worktree
+    from hive_cli.services import handoffs
 
     def _make(branch: str) -> Path:
-        return create_worktree(branch, temp_git_repo)
+        path = create_worktree(branch, temp_git_repo)
+        handoffs.setup_handoff_symlink(path, branch, temp_git_repo)
+        return path
 
     return _make

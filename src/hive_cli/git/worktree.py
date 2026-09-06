@@ -368,11 +368,6 @@ def create_worktree(branch: str, main_repo: Path | None = None) -> Path:
     else:
         _create_worktree_for_new_branch(main_repo, worktree_path, branch)
 
-    # Setup handoff symlink for the worktree
-    from ..handoffs import setup_handoff_symlink
-
-    setup_handoff_symlink(worktree_path, branch, main_repo)
-
     return worktree_path
 
 

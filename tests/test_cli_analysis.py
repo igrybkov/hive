@@ -20,8 +20,9 @@ from hive_cli.app import app
 def _commit_only(repo: Path, name: str, content: str, message: str) -> None:
     """Like ``commit_file`` but stages only ``name``, not ``-A``.
 
-    ``create_worktree`` leaves an untracked ``.claude/HANDOFF.md`` symlink in
-    every worktree (see ``hive_cli.handoffs.setup_handoff_symlink``).
+    The ``make_worktree`` fixture leaves an untracked ``.claude/HANDOFF.md``
+    symlink in every worktree (see
+    ``hive_cli.services.handoffs.setup_handoff_symlink``).
     ``commit_file``'s ``git add -A`` would sweep that symlink in too, making
     every pair of worktrees with any commit look like they "overlap" on
     ``.claude/HANDOFF.md`` regardless of what was actually edited. Tests that
