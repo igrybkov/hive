@@ -40,6 +40,7 @@ COMMANDS: dict[str, list[str]] = {
     "diff": [],
     "rebase-check": [],
     "merge-preview": [],
+    "doctor": [],
 }
 
 

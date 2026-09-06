@@ -13,6 +13,7 @@ from __future__ import annotations
 from cyclopts import App
 
 from . import __version__
+from .core import trace
 
 app = App(
     name="hive",
@@ -78,6 +79,13 @@ LAZY_COMMANDS: list[tuple[str, str, str]] = [
         "hive_cli.commands.merge:merge_preview_app",
         "Preview potential merge conflicts between agent branches.",
     ),
+    (
+        "doctor",
+        "hive_cli.commands.doctor:doctor_app",
+        "Check hive's environment and measure startup and hot-path timings.",
+    ),
 ]
 for _name, _target, _help in LAZY_COMMANDS:
     app.command(_target, name=_name, help=_help)
+
+trace.mark("app_imported")

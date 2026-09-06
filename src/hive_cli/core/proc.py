@@ -35,6 +35,7 @@ def run(
 ) -> Result:
     """Run argv without a shell, capture text output; raise only if ``check`` fails."""
     args = tuple(str(a) for a in argv)
+    trace.count_spawn()
     started = time.perf_counter()
     try:
         cp = subprocess.run(

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ..agents.profiles import resolve_profile_env
 from ..config import get_runtime_settings, get_settings
-from ..core import paths
+from ..core import paths, trace
 from ..git import expand_path, get_main_repo
 from ..mux import get_mux
 from ..mux.base import Mux
@@ -193,6 +193,7 @@ def run_agent(
     first one; hive only terminates the child on the second.
     """
     child = subprocess.Popen(argv, env=env, cwd=cwd, stderr=stderr)
+    trace.mark("agent_started")
     if ctx:
         ctx.update(status="running", agent_pid=child.pid)
     interrupts = 0

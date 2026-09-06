@@ -9,6 +9,7 @@ Manage AI coding agents and git worktrees for parallel development.
 │ completion      Generate shell completion script.                                                │
 │ config          Manage hive configuration.                                                       │
 │ diff            Show unified diff of all agent worktrees against main branch.                    │
+│ doctor          Check hive's environment and measure startup and hot-path timings.               │
 │ handoff         Manage branch handoff notes.                                                     │
 │ merge-preview   Preview potential merge conflicts between agent branches.                        │
 │ rebase-check    Check if agent worktrees need rebasing against default branch.                   │
@@ -404,6 +405,15 @@ Preview potential merge conflicts between agent branches.
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
 │ AGENT-ID --agent-id  Agent identifier to preview merge for.                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive doctor --help ===
+Usage: hive doctor [ARGS]
+
+Check hive's environment and measure startup and hot-path timings.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ TIMING --timing --no-timing  Time each startup phase (import, config, worktree list, status      │
+│                              collect) and count the commands it spawns. [default: False]         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive --version ===
 0.1.0

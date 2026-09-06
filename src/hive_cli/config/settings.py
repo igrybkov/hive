@@ -15,6 +15,7 @@ from typing import Annotated, Any, ClassVar
 from pydantic import Field
 from pydantic_settings import PydanticBaseSettingsSource
 
+from ..core import trace
 from . import loader
 from .base import HiveBaseSettings
 from .merge import deep_merge
@@ -118,6 +119,7 @@ def get_settings() -> HiveSettings:
     global _settings
     if _settings is None:
         _settings = HiveSettings()
+        trace.mark("config_loaded")
     return _settings
 
 
