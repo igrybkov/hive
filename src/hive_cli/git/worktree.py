@@ -15,11 +15,18 @@ from .worktree_paths import compute_worktree_path
 
 @dataclass
 class WorktreeInfo:
-    """Information about a git worktree."""
+    """Information about a git worktree.
+
+    `branch` is the name hive uses for it ("main" for the main worktree);
+    `head` is the branch actually checked out there ("" when detached),
+    read from the same `git worktree list` call so no second spawn is
+    needed to learn what the main repo is on.
+    """
 
     branch: str
     path: Path
     is_main: bool = False
+    head: str = ""
 
 
 def _find_existing_worktree(branch: str, main_repo: Path) -> Path | None:
@@ -74,7 +81,7 @@ def get_worktree_path(branch: str, main_repo: Path | None = None) -> Path:
 
 
 def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
-    """List all git worktrees for the repository.
+    """List all git worktrees for the repository (one spawn).
 
     Args:
         main_repo: Path to main repository. If None, auto-detected.
@@ -85,27 +92,24 @@ def list_worktrees(main_repo: Path | None = None) -> list[WorktreeInfo]:
     if main_repo is None:
         main_repo = get_main_repo()
 
-    worktrees = [WorktreeInfo(branch="main", path=main_repo, is_main=True)]
-
     result = proc.run(["git", "worktree", "list", "--porcelain"], cwd=main_repo)
-    if not result.ok:
-        return worktrees
-
-    worktrees.extend(_parse_worktree_list(result.stdout, main_repo))
+    entries = _parse_worktree_list(result.stdout) if result.ok else []
+    head = next((branch for path, branch in entries if path == main_repo), "")
+    worktrees = [WorktreeInfo(branch="main", path=main_repo, is_main=True, head=head)]
+    worktrees.extend(
+        WorktreeInfo(branch=branch, path=path, head=branch)
+        for path, branch in entries
+        if path != main_repo and branch
+    )
     return worktrees
 
 
-def _parse_worktree_list(stdout: str, main_repo: Path) -> list[WorktreeInfo]:
-    """Parse `git worktree list --porcelain` output into WorktreeInfo entries.
+def _parse_worktree_list(stdout: str) -> list[tuple[Path, str]]:
+    """Parse `git worktree list --porcelain` into (path, branch) entries.
 
-    Args:
-        stdout: Raw porcelain output.
-        main_repo: Path to main repository (excluded from the result).
-
-    Returns:
-        List of non-main WorktreeInfo objects.
+    `branch` is "" for a detached worktree. The main worktree is included.
     """
-    entries: list[WorktreeInfo] = []
+    entries: list[tuple[Path, str]] = []
     worktree_path = ""
     worktree_branch = ""
 
@@ -116,21 +120,13 @@ def _parse_worktree_list(stdout: str, main_repo: Path) -> list[WorktreeInfo]:
             worktree_branch = line[18:]  # Remove "branch refs/heads/" prefix
         elif line == "" and worktree_path:
             # End of worktree entry
-            wt_path = Path(worktree_path)
-            if wt_path != main_repo and worktree_branch:
-                entries.append(
-                    WorktreeInfo(branch=worktree_branch, path=wt_path, is_main=False)
-                )
+            entries.append((Path(worktree_path), worktree_branch))
             worktree_path = ""
             worktree_branch = ""
 
     # Handle last entry if no trailing newline
-    if worktree_path and worktree_branch:
-        wt_path = Path(worktree_path)
-        if wt_path != main_repo:
-            entries.append(
-                WorktreeInfo(branch=worktree_branch, path=wt_path, is_main=False)
-            )
+    if worktree_path:
+        entries.append((Path(worktree_path), worktree_branch))
 
     return entries
 

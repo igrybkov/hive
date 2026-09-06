@@ -1,4 +1,12 @@
-"""Fuzzy finder utilities using prompt_toolkit for fzf-like experience."""
+"""Fuzzy finder utilities using prompt_toolkit for fzf-like experience.
+
+The picker paints its initial items immediately; anything slower arrives
+through *refiners*: synchronous callables `(cancel: threading.Event) ->
+list[FuzzyItem] | None` that the picker runs off the event loop
+(`services.aio.call`) right after the first paint and merges back in place
+with `update_items`. A refiner that returns None changes nothing; every
+refiner is told to stop (its `cancel` event) the moment the picker exits.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +21,7 @@ from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import HTML, FormattedText
+from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import (
     ConditionalContainer,
@@ -24,7 +33,10 @@ from prompt_toolkit.layout import (
 )
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import BeforeInput
-from prompt_toolkit.output import create_output
+from prompt_toolkit.output import Output, create_output
+
+from ...core import trace
+from ...services import aio
 
 
 @dataclass
@@ -35,6 +47,9 @@ class FuzzyItem:
     value: str  # Return value (e.g., branch name)
     meta: str = ""  # Extra info (dimmed)
     style: str = ""  # prompt_toolkit style string
+
+
+Refiner = Callable[[threading.Event], "list[FuzzyItem] | None"]
 
 
 @dataclass
@@ -50,6 +65,7 @@ class _PickerState:
     exiting: bool = False
     auto_select_active: bool = False
     cancelled: threading.Event = field(default_factory=threading.Event)
+    refine_cancel: threading.Event = field(default_factory=threading.Event)
 
 
 def _fuzzy_match(query: str, text: str) -> tuple[bool, int]:
@@ -206,8 +222,9 @@ def _safe_exit(state: _PickerState, event, exception=None) -> None:
     if state.exiting:
         return
     state.exiting = True
-    # Cancel auto-select timer when exiting
+    # Cancel auto-select timer and tell refiners to stop when exiting
     state.cancelled.set()
+    state.refine_cancel.set()
     if exception:
         event.app.exit(exception=exception)
     else:
@@ -321,8 +338,47 @@ def _run_auto_select_countdown(
     # Timer expired without cancellation - auto-select
     if not state.cancelled.is_set():
         state.result = auto_select_value
+        state.refine_cancel.set()
         # Exit the app from background thread
         app.exit()
+
+
+def _make_refine(state: _PickerState, update_items: Callable[[list[FuzzyItem]], None]):
+    """Coroutine factory: run one refiner off the loop, merge its items back."""
+
+    async def refine(fn: Refiner) -> None:
+        try:
+            items = await aio.call(fn, state.refine_cancel)
+        except Exception as exc:  # a failing refiner leaves the first paint as is
+            trace.event("picker", "refiner_failed", error=type(exc).__name__)
+            return
+        if items is not None and not state.refine_cancel.is_set():
+            update_items(items)
+            trace.mark("picker_refined")
+
+    return refine
+
+
+def _make_pre_run(app: Application[None], refiners: Sequence[Refiner], refine):
+    """Schedule the refiners on the app's own loop (only valid inside run())."""
+
+    def pre_run() -> None:
+        for fn in refiners:
+            app.create_background_task(refine(fn))
+
+    return pre_run
+
+
+def _make_first_paint_mark():
+    painted = False
+
+    def after_render(_app: Application[None]) -> None:
+        nonlocal painted
+        if not painted:
+            painted = True
+            trace.mark("picker_first_paint")
+
+    return after_render
 
 
 def fuzzy_select(
@@ -338,11 +394,9 @@ def fuzzy_select(
     on_ctrl_s: Callable[[], str | None] | None = None,
     on_ctrl_w: Callable[[], str | None] | None = None,
     on_ctrl_p: Callable[[], str | None] | None = None,
-    update_callbacks: list[
-        tuple[Callable[[list[FuzzyItem]], None], Callable[[str], None]]
-    ]
-    | None = None,
-    update_callbacks_ready: threading.Event | None = None,
+    refiners: Sequence[Refiner] = (),
+    input: Input | None = None,
+    output: Output | None = None,
     auto_select_value: str | None = None,
     auto_select_timeout: float = 3.0,
 ) -> str | None:
@@ -368,10 +422,13 @@ def fuzzy_select(
         on_ctrl_p: Callback when Ctrl+P is pressed (profile selection).
             If returns a string, use as result. If returns None, stay in picker.
             Note: Ctrl+P is no longer bound to up-navigation; use ↑ instead.
-        update_callbacks: Optional list to store (update_items, update_header)
-            functions. If provided, functions available immediately when picker opens.
-        update_callbacks_ready: Optional threading.Event to signal when callbacks
-            are ready. If provided, will be set after callbacks are populated.
+        refiners: Callables `(cancel) -> list[FuzzyItem] | None`, each run off
+            the event loop right after the first paint; a returned list is
+            merged in place (positions kept, new items appended), None means
+            no change. `cancel` is set when the picker exits.
+        input: prompt_toolkit Input (tests: `create_pipe_input()`).
+        output: prompt_toolkit Output (tests: `DummyOutput()`); defaults to
+            stderr so stdout can be captured by the shell.
         auto_select_value: If set, automatically select this value after timeout.
             Any keypress cancels the auto-select timer.
         auto_select_timeout: Seconds before auto-selection (default 3.0).
@@ -483,7 +540,9 @@ def fuzzy_select(
         key_bindings=kb,
         full_screen=True,
         mouse_support=True,
-        output=create_output(stdout=sys.stderr),
+        input=input,
+        output=output if output is not None else create_output(stdout=sys.stderr),
+        after_render=_make_first_paint_mark(),
     )
 
     def update_items(new_items: list[FuzzyItem]) -> None:
@@ -507,24 +566,6 @@ def fuzzy_select(
         # Trigger smooth redraw (thread-safe)
         app.invalidate()
 
-    def update_header(new_header: str) -> None:
-        """Update the header text dynamically.
-
-        Args:
-            new_header: New header text to display.
-        """
-        state.header_text = new_header
-        # Trigger smooth redraw (thread-safe)
-        app.invalidate()
-
-    # Store update functions in callback list if provided
-    # (before app.run so they're available immediately)
-    if update_callbacks is not None:
-        update_callbacks.append((update_items, update_header))
-        # Signal that callbacks are ready
-        if update_callbacks_ready is not None:
-            update_callbacks_ready.set()
-
     # Start auto-select timer if configured
     if auto_select_value is not None:
         if auto_select_timeout <= 0:
@@ -537,9 +578,12 @@ def fuzzy_select(
         )
         auto_select_thread.start()
 
+    refine = _make_refine(state, update_items)
     try:
-        app.run()
+        app.run(pre_run=_make_pre_run(app, refiners, refine))
     except KeyboardInterrupt:
         state.cancelled.set()
         return None
+    finally:
+        state.refine_cancel.set()
     return state.result

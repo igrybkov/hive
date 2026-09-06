@@ -314,3 +314,17 @@ class TestCommitFileHelper:
         sha = commit_file(temp_git_repo, "extra.txt", "content", message="add extra")
         assert sha
         assert (temp_git_repo / "extra.txt").read_text() == "content"
+
+
+class TestListWorktreesHead:
+    def test_main_head_comes_from_the_listing(self, temp_git_repo, make_worktree):
+        make_worktree("feat-a")
+        git("checkout", "-q", "-b", "topic", cwd=temp_git_repo)
+        worktrees = list_worktrees(temp_git_repo)
+        assert worktrees[0].is_main and worktrees[0].head == "topic"
+        assert worktrees[0].branch == "main"  # hive's name for it never changes
+        assert [w.head for w in worktrees[1:]] == ["feat-a"]
+
+    def test_detached_main_has_empty_head(self, temp_git_repo):
+        git("checkout", "-q", "--detach", cwd=temp_git_repo)
+        assert list_worktrees(temp_git_repo)[0].head == ""

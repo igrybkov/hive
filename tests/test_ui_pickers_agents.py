@@ -1,48 +1,32 @@
-"""Tests for hive_cli.ui.pickers.agents.select_agent.
-
-select_agent() starts a real background thread *before* calling
-fuzzy_select(); the thread blocks on `update_callbacks_ready` until the
-(real, interactive) fuzzy_select populates it. Our fake fuzzy_select does
-that immediately, then blocks on a `done` Event that the background
-thread's update_items() callback sets -- bounding the wait without any
-fixed sleep, and without needing to stub threading.Thread itself.
-"""
+"""Tests for ui.pickers.agents.select_agent: items are built before the picker opens."""
 
 from __future__ import annotations
 
-import threading
 from unittest.mock import patch
 
 from hive_cli.ui.pickers.agents import select_agent
 
 
+def _capturing_fuzzy_select(captured: dict, result):
+    def fake_fuzzy_select(items, **kwargs):
+        captured["items"] = items
+        captured["header"] = kwargs["header"]
+        return result
+
+    return fake_fuzzy_select
+
+
 class TestSelectAgent:
     def test_returns_selected_agent_and_marks_current(self):
-        captured = {}
-        done = threading.Event()
-
-        def fake_fuzzy_select(
-            items, update_callbacks=None, update_callbacks_ready=None, **kwargs
-        ):
-            def update_items(new_items):
-                captured["items"] = new_items
-                done.set()
-
-            def update_header(new_header):
-                captured["header"] = new_header
-
-            update_callbacks.append((update_items, update_header))
-            update_callbacks_ready.set()
-            done.wait(timeout=1.0)
-            return "gemini"
-
+        captured: dict = {}
         with (
             patch(
                 "hive_cli.ui.pickers.agents.get_available_agents",
                 return_value=["claude", "gemini"],
             ),
             patch(
-                "hive_cli.ui.pickers.agents.fuzzy_select", side_effect=fake_fuzzy_select
+                "hive_cli.ui.pickers.agents.fuzzy_select",
+                side_effect=_capturing_fuzzy_select(captured, "gemini"),
             ),
         ):
             result = select_agent(current_agent="claude")
@@ -54,29 +38,13 @@ class TestSelectAgent:
         assert by_value["claude"].style == "green"
         assert by_value["gemini"].meta == ""
 
-    def test_no_agents_found_updates_header_with_error(self):
-        captured = {}
-        done = threading.Event()
-
-        def fake_fuzzy_select(
-            items, update_callbacks=None, update_callbacks_ready=None, **kwargs
-        ):
-            def update_items(new_items):
-                captured["items"] = new_items
-                done.set()
-
-            def update_header(new_header):
-                captured["header"] = new_header
-
-            update_callbacks.append((update_items, update_header))
-            update_callbacks_ready.set()
-            done.wait(timeout=1.0)
-            return None
-
+    def test_no_agents_found_shows_error_header_and_placeholder(self):
+        captured: dict = {}
         with (
             patch("hive_cli.ui.pickers.agents.get_available_agents", return_value=[]),
             patch(
-                "hive_cli.ui.pickers.agents.fuzzy_select", side_effect=fake_fuzzy_select
+                "hive_cli.ui.pickers.agents.fuzzy_select",
+                side_effect=_capturing_fuzzy_select(captured, None),
             ),
         ):
             result = select_agent(current_agent="claude")

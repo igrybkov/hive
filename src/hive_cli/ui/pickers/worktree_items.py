@@ -1,32 +1,23 @@
-"""FuzzyItem builders for the worktree/branch picker.
+"""Items for the worktree/branch picker: one cheap first paint, refined later.
 
-Split out of ui/pickers/worktrees.py (A0 wt.py pass) to keep that module
-under the 600-line cap, per A0-architecture.md's own suggested split for
-this file. `_build_fuzzy_items_fast`/`_build_fuzzy_items` were pre-existing
-complexipy violations (cognitive complexity > 15); split by pure extraction
-(helpers with the same locals as parameters, no logic change) in the same
-move that relocated them here.
+`first_paint` costs exactly one spawn (`git worktree list --porcelain`): the
+main repo, its worktrees, and nothing else. `PickerItems` keeps the sections
+the picker shows; the refiners in ./worktrees.py fill in git summaries
+(dirty/ahead/behind), the branch list and GitHub issues, and call
+`compose()` to hand the picker a full list each time. Issues are filtered
+against every branch known at compose time, so whichever refiner finishes
+last still produces a consistent list.
 
 The `ACTION_*` sentinels live here (not in worktrees.py) so this module has
-no dependency on worktrees.py -- worktrees.py imports them (and the two
-builders, and `_slow_worktree_item` for its own background refresh) from
-here instead, keeping the dependency one-directional.
+no dependency on worktrees.py, keeping the dependency one-directional.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...git import (
-    GitHubIssue,
-    fetch_issues,
-    get_all_branches,
-    get_current_branch,
-    get_issues_cache_path,
-    is_worktree_dirty,
-    list_worktrees,
-    load_cached_issues,
-)
+from ...git import GitHubIssue, GitSummary, WorktreeInfo, list_worktrees
 from ..flows import worktrees as flows
 from .fuzzy import FuzzyItem
 
@@ -44,12 +35,7 @@ ACTION_CHANGE_PROFILE = "__change_profile__"
 def _issue_fuzzy_item(
     issue: GitHubIssue, existing_branches: set[str]
 ) -> FuzzyItem | None:
-    """Build a FuzzyItem for a GitHub issue, or None if a branch for it already exists.
-
-    Shared by the fast (cached) and slow (live-fetched) item builders below,
-    and by pick_worktree's background issue refresh -- the three copies of
-    this logic were byte-for-byte identical duplicates, not divergent flows.
-    """
+    """FuzzyItem for a GitHub issue, or None when a branch for it already exists."""
     issue_prefix = f"gh-{issue.number}-"
     has_existing_branch = any(
         b.startswith(issue_prefix) or b == f"gh-issue-{issue.number}"
@@ -67,246 +53,108 @@ def _issue_fuzzy_item(
     )
 
 
-def _is_initial_selection(wt, select_branch: str | None) -> bool:
+def _is_initial_selection(wt: WorktreeInfo, select_branch: str | None) -> bool:
     """Whether `wt` is the one to pre-select in the picker."""
     if wt.is_main:
         return select_branch in ("main", "1")
     return wt.branch == select_branch
 
 
-def _fast_worktree_item(
-    wt, current_main_branch: str | None, current_worktree_branch: str | None
-) -> tuple[FuzzyItem, str | None]:
-    """Build a FuzzyItem for one worktree in the fast (no dirty-check) list.
-
-    Returns (item, extra_excluded_branch): extra_excluded_branch is the
-    current_main_branch when it should also be excluded from the plain
-    branch list (main repo checked out to a non-main/master branch).
-    """
-    if wt.is_main:
-        if current_main_branch and current_main_branch not in ("main", "master"):
-            return (
-                FuzzyItem(
-                    text="main",
-                    value=wt.branch,
-                    meta=f"[repo @ {current_main_branch}]",
-                    style="bold green",
-                ),
-                current_main_branch,
-            )
-        return (
-            FuzzyItem(text="main", value=wt.branch, meta="[repo]", style="bold green"),
-            None,
-        )
-
-    is_current = wt.branch == current_worktree_branch
-    meta = "← current" if is_current else ""
-    return FuzzyItem(text=wt.branch, value=wt.branch, meta=meta, style="green"), None
-
-
-def _append_fast_worktree_items(
-    items: list[FuzzyItem],
-    worktree_branches: set[str],
-    worktrees,
-    current_main_branch: str | None,
-    current_worktree_branch: str | None,
-    select_branch: str | None,
-) -> int:
-    """Append fast (no dirty-check) worktree items to `items` in place.
-
-    Returns the initial_selection index if a worktree matched select_branch,
-    else -1 (caller keeps its previous value).
-    """
-    initial_selection = -1
-    for wt in worktrees:
-        worktree_branches.add(wt.branch)
-        item, extra_excluded = _fast_worktree_item(
-            wt, current_main_branch, current_worktree_branch
-        )
-        if extra_excluded:
-            worktree_branches.add(extra_excluded)
-        if _is_initial_selection(wt, select_branch):
-            initial_selection = len(items)
-        items.append(item)
-    return initial_selection
-
-
-def _build_fuzzy_items_fast(
-    main_repo: Path,
-    current_worktree_branch: str | None = None,
-    preselect_branch: str | None = None,
-) -> tuple[list[FuzzyItem], int]:
-    """Build list of items quickly.
-
-    Skips slow operations like dirty checks and remote branches.
-
-    Args:
-        main_repo: Path to the main repository.
-        current_worktree_branch: Branch of current worktree (if in one).
-        preselect_branch: Branch to pre-select (overrides current_worktree_branch).
-
-    Returns:
-        Tuple of (list of FuzzyItem, initial selection index).
-    """
-    items: list[FuzzyItem] = []
-    worktree_branches: set[str] = set()
-    initial_selection = 0
-
-    # Use preselect_branch if provided, otherwise fall back to current_worktree_branch
-    select_branch = preselect_branch or current_worktree_branch
-
-    # Get current branch of main repo - can't create worktree for it
-    current_main_branch = get_current_branch(main_repo)
-
-    # Get worktrees first (they show at top) - fast operation
-    worktrees = list_worktrees(main_repo)
-    selected_idx = _append_fast_worktree_items(
-        items,
-        worktree_branches,
-        worktrees,
-        current_main_branch,
-        current_worktree_branch,
-        select_branch,
-    )
-    if selected_idx >= 0:
-        initial_selection = selected_idx
-
-    # Get all branches (local + remote from existing refs)
-    # This is fast, no fetch needed! Remote branches are already stored locally
-    all_branches = get_all_branches(main_repo)
-    for branch in all_branches:
-        if branch not in worktree_branches:
-            if branch == select_branch:
-                initial_selection = len(items)
-            items.append(FuzzyItem(text=branch, value=branch, meta="", style="dim"))
-
-    # Load cached GitHub issues immediately (fast, no API call needed)
-    cache_path = get_issues_cache_path(main_repo)
-    cached_issues = load_cached_issues(cache_path)
-    existing_branches = worktree_branches | set(all_branches)
-    for issue in cached_issues:
-        item = _issue_fuzzy_item(issue, existing_branches)
-        if item:
-            items.append(item)
-
-    return items, initial_selection
-
-
-def _slow_worktree_item(
-    wt, current_main_branch: str | None, current_worktree_branch: str | None
-) -> tuple[FuzzyItem, str | None]:
-    """Build a FuzzyItem for one worktree, with a real dirty check.
-
-    Returns (item, extra_excluded_branch), same shape as _fast_worktree_item.
-    """
-    is_dirty = False if wt.is_main else is_worktree_dirty(wt.path)
-
-    if wt.is_main:
-        if current_main_branch and current_main_branch not in ("main", "master"):
-            return (
-                FuzzyItem(
-                    text="main",
-                    value=wt.branch,
-                    meta=f"[repo @ {current_main_branch}]",
-                    style="bold green",
-                ),
-                current_main_branch,
-            )
-        return (
-            FuzzyItem(text="main", value=wt.branch, meta="[repo]", style="bold green"),
-            None,
-        )
-
-    is_current = wt.branch == current_worktree_branch
-    if is_current:
-        meta = "← current" + (" (dirty)" if is_dirty else "")
+def _main_item(wt: WorktreeInfo, current_main_branch: str | None) -> FuzzyItem:
+    if current_main_branch and current_main_branch not in ("main", "master"):
+        meta = f"[repo @ {current_main_branch}]"
     else:
-        meta = "(dirty)" if is_dirty else ""
+        meta = "[repo]"
+    return FuzzyItem(text="main", value=wt.branch, meta=meta, style="bold green")
+
+
+def _worktree_item(
+    wt: WorktreeInfo, current_worktree_branch: str | None, summary: GitSummary | None
+) -> FuzzyItem:
+    """One non-main worktree; dirty/ahead/behind appear once a summary exists."""
+    meta_parts: list[str] = []
+    if wt.branch == current_worktree_branch:
+        meta_parts.append("← current")
+    is_dirty = summary.dirty if summary else False
+    if is_dirty:
+        meta_parts.append("(dirty)")
+    if summary and summary.ahead:
+        meta_parts.append(f"+{summary.ahead}")
+    if summary and summary.behind:
+        meta_parts.append(f"-{summary.behind}")
     style = "yellow" if is_dirty else "green"
-    return FuzzyItem(text=wt.branch, value=wt.branch, meta=meta, style=style), None
-
-
-def _append_slow_worktree_items(
-    items: list[FuzzyItem],
-    worktree_branches: set[str],
-    worktrees,
-    current_main_branch: str | None,
-    current_worktree_branch: str | None,
-    select_branch: str | None,
-) -> int:
-    """Append dirty-checked worktree items to `items` in place.
-
-    Returns the initial_selection index if a worktree matched select_branch,
-    else -1 (caller keeps its previous value).
-    """
-    initial_selection = -1
-    for wt in worktrees:
-        worktree_branches.add(wt.branch)
-        item, extra_excluded = _slow_worktree_item(
-            wt, current_main_branch, current_worktree_branch
-        )
-        if extra_excluded:
-            worktree_branches.add(extra_excluded)
-        if _is_initial_selection(wt, select_branch):
-            initial_selection = len(items)
-        items.append(item)
-    return initial_selection
-
-
-def _build_fuzzy_items(
-    main_repo: Path,
-    current_worktree_branch: str | None = None,
-    preselect_branch: str | None = None,
-) -> tuple[list[FuzzyItem], int]:
-    """Build list of items for fuzzy selection.
-
-    Args:
-        main_repo: Path to the main repository.
-        current_worktree_branch: Branch of current worktree (if in one).
-        preselect_branch: Branch to pre-select (overrides current_worktree_branch).
-
-    Returns:
-        Tuple of (list of FuzzyItem, initial selection index).
-    """
-    items: list[FuzzyItem] = []
-    worktree_branches: set[str] = set()
-    initial_selection = 0
-
-    # Use preselect_branch if provided, otherwise fall back to current_worktree_branch
-    select_branch = preselect_branch or current_worktree_branch
-
-    # Get current branch of main repo - can't create worktree for it
-    current_main_branch = get_current_branch(main_repo)
-
-    # Get worktrees first (they show at top)
-    worktrees = list_worktrees(main_repo)
-    selected_idx = _append_slow_worktree_items(
-        items,
-        worktree_branches,
-        worktrees,
-        current_main_branch,
-        current_worktree_branch,
-        select_branch,
+    return FuzzyItem(
+        text=wt.branch, value=wt.branch, meta=" ".join(meta_parts), style=style
     )
-    if selected_idx >= 0:
-        initial_selection = selected_idx
 
-    # Get all branches and add those without worktrees
-    all_branches = get_all_branches(main_repo)
-    for branch in all_branches:
-        if branch not in worktree_branches:
-            if branch == select_branch:
-                initial_selection = len(items)
+
+@dataclass
+class PickerItems:
+    """The picker's item sections. Refiners replace a section and `compose()`."""
+
+    worktrees: list[WorktreeInfo]
+    current_worktree_branch: str | None
+    select_branch: str | None
+    summaries: dict[Path, GitSummary] = field(default_factory=dict)
+    branches: list[str] = field(default_factory=list)
+    issues: list[GitHubIssue] = field(default_factory=list)
+
+    @property
+    def current_main_branch(self) -> str | None:
+        main = next((wt for wt in self.worktrees if wt.is_main), None)
+        return (main.head or None) if main else None
+
+    def _worktree_section(self) -> tuple[list[FuzzyItem], set[str], int]:
+        items: list[FuzzyItem] = []
+        excluded: set[str] = set()
+        initial = 0
+        for wt in self.worktrees:
+            excluded.add(wt.branch)
+            if wt.is_main:
+                item = _main_item(wt, self.current_main_branch)
+                # The main repo's checked-out branch can't get a worktree either.
+                if self.current_main_branch not in (None, "main", "master"):
+                    excluded.add(str(self.current_main_branch))
+            else:
+                item = _worktree_item(
+                    wt, self.current_worktree_branch, self.summaries.get(wt.path)
+                )
+            if _is_initial_selection(wt, self.select_branch):
+                initial = len(items)
+            items.append(item)
+        return items, excluded, initial
+
+    def compose(self) -> tuple[list[FuzzyItem], int]:
+        """Full item list (worktrees, plain branches, issues) and initial index."""
+        items, excluded, initial = self._worktree_section()
+        for branch in self.branches:
+            if branch in excluded:
+                continue
+            if branch == self.select_branch:
+                initial = len(items)
             items.append(FuzzyItem(text=branch, value=branch, meta="", style="dim"))
-
-    # Fetch GitHub issues assigned to user and add them
-    # Issues are shown after branches with emoji prefix
-    github_issues = fetch_issues(main_repo)
-    if github_issues is not None:
-        existing_branches = worktree_branches | set(all_branches)
-        for issue in github_issues:
-            item = _issue_fuzzy_item(issue, existing_branches)
+        existing = excluded | set(self.branches)
+        for issue in self.issues:
+            item = _issue_fuzzy_item(issue, existing)
             if item:
                 items.append(item)
+        return items, initial
 
-    return items, initial_selection
+
+def first_paint(
+    main_repo: Path,
+    current_worktree_branch: str | None = None,
+    preselect_branch: str | None = None,
+) -> tuple[PickerItems, list[FuzzyItem], int]:
+    """Items the picker can show at once: one `git worktree list` spawn.
+
+    Returns the sections (for the refiners to fill in), the items and the
+    initial selection index.
+    """
+    sections = PickerItems(
+        worktrees=list_worktrees(main_repo),
+        current_worktree_branch=current_worktree_branch,
+        select_branch=preselect_branch or current_worktree_branch,
+    )
+    items, initial = sections.compose()
+    return sections, items, initial

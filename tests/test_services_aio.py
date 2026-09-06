@@ -23,3 +23,12 @@ def test_hive_error_propagates():
 
     with pytest.raises(HiveError, match="boom"):
         asyncio.run(aio.call(_raise))
+
+
+def test_call_runs_on_a_daemon_thread():
+    """A refiner that ignores `cancel` must never keep the picker from exiting."""
+    assert asyncio.run(aio.call(lambda: threading.current_thread().daemon)) is True
+
+
+def test_call_passes_arguments():
+    assert asyncio.run(aio.call(lambda a, b=0: a + b, 2, b=3)) == 5

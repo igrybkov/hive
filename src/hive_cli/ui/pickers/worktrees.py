@@ -1,23 +1,19 @@
 """Interactive worktree/branch picker for agent workflows (`hive wt cd`/`ensure`).
 
-Moved from commands/wt.py (A0 wt.py pass): `pick_worktree` is the old
-`_interactive_ensure`, a pre-existing complexipy violation (cognitive
-complexity > 15) split by pure extraction (helpers with the same locals as
-parameters, no logic change) in this same move. The FuzzyItem builders it
-uses live in ./worktree_items.py (split out to keep this module under the
-600-line cap, per A0-architecture.md's own suggested split for this file).
+`pick_worktree` paints the picker from `worktree_items.first_paint` (one
+spawn) and hands `fuzzy_select` two refiners that run off the event loop:
+`refine_git` (throttled `git fetch`, per-worktree summaries, the branch
+list) and `refine_issues` (cached GitHub issues). Each returns the full item
+list for the picker to merge in place, or None for "no change", and stops as
+soon as its `cancel` event is set.
 
-`_refresh_dirty_status`'s worktree-item loop near-duplicates
-worktree_items.py's `_build_fuzzy_items` (both compute dirty status per
-worktree), but it serves a different call site (a background re-render vs.
-the initial full build) and doesn't track `initial_selection` -- kept
-separate rather than unified, matching the same "don't unify near-duplicates
-with different call-sites" rule applied to the two `_delete_worktree_flow`
-copies.
+Moved from commands/wt.py (A0 wt.py pass): `pick_worktree` is the old
+`_interactive_ensure`, split by pure extraction into the helpers below.
 """
 
 from __future__ import annotations
 
+import functools
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,15 +26,12 @@ from ...config import (
     get_settings,
 )
 from ...git import (
-    fetch_issues,
     get_all_branches,
-    get_current_branch,
     get_current_worktree_branch,
     get_default_branch,
     get_main_repo,
     get_worktree_path,
     is_worktree_dirty,
-    list_worktrees,
 )
 from ...services import editors, facts
 from ..console import error, info, warn
@@ -57,9 +50,8 @@ from .worktree_items import (
     ACTION_NEW_BRANCH,
     ACTION_OPEN_IN_EDITOR_PREFIX,
     ACTION_TOGGLE_SKIP_PERMISSIONS,
-    _build_fuzzy_items,
-    _build_fuzzy_items_fast,
-    _slow_worktree_item,
+    PickerItems,
+    first_paint,
 )
 
 __all__ = [
@@ -72,97 +64,34 @@ __all__ = [
     "ACTION_OPEN_IN_EDITOR_PREFIX",
     "ACTION_TOGGLE_SKIP_PERMISSIONS",
     "pick_worktree",
+    "refine_git",
+    "refine_issues",
 ]
 
 
-def _refresh_dirty_status(
-    main_repo: Path,
-    current_worktree_branch: str | None,
-    base_header: str,
-    update_callbacks: list,
-    update_callbacks_ready: threading.Event,
-) -> None:
-    """Background: fetch origin, then refresh items with real dirty checks."""
-    # Wait for update functions to be populated (should be very quick, < 100ms)
-    if not update_callbacks_ready.wait(timeout=1.0):
-        return  # Update functions not available within 1 second, skip update
-
-    if not update_callbacks:
-        return  # Update functions not available, skip update
-
-    update_items, update_header = update_callbacks[0]
-
-    # Start git fetch (this is the slow part, ~3 seconds) unless one ran recently
+def refine_git(
+    main_repo: Path, sections: PickerItems, cancel: threading.Event
+) -> list[FuzzyItem] | None:
+    """Fetch (throttled), summarise every worktree, list branches; recompose."""
     facts.fetch_if_stale(main_repo, get_settings().worktrees.fetch_interval)
-
-    # Remove fetching indicator immediately after fetch completes
-    update_header(base_header)
-
-    # Update items with dirty checks
-    # Branches already shown, just updating metadata
-    # Skip GitHub issues (they're fetched separately)
-    items_with_dirty = []
-    worktree_branches: set[str] = set()
-
-    # Get worktrees and update dirty status
-    worktrees = list_worktrees(main_repo)
-    current_main_branch = get_current_branch(main_repo)
-
-    for wt in worktrees:
-        worktree_branches.add(wt.branch)
-        item, extra_excluded = _slow_worktree_item(
-            wt, current_main_branch, current_worktree_branch
-        )
-        if extra_excluded:
-            worktree_branches.add(extra_excluded)
-        items_with_dirty.append(item)
-
-    # Add all branches (already shown, but rebuild to match structure)
-    all_branches = get_all_branches(main_repo)
-    for branch in all_branches:
-        if branch not in worktree_branches:
-            items_with_dirty.append(
-                FuzzyItem(text=branch, value=branch, meta="", style="dim")
-            )
-
-    # Update with dirty status (branches stay in place, only metadata changes)
-    update_items(items_with_dirty)
+    if cancel.is_set():
+        return None
+    sections.summaries = facts.summaries(sections.worktrees, cancel=cancel)
+    if cancel.is_set():
+        return None
+    sections.branches = get_all_branches(main_repo)
+    return sections.compose()[0]
 
 
-def _refresh_github_issues(
-    main_repo: Path,
-    current_worktree_branch: str | None,
-    preselect_branch: str | None,
-    base_header: str,
-    update_callbacks: list,
-    update_callbacks_ready: threading.Event,
-) -> None:
-    """Fetch GitHub issues independently and update when ready."""
-    # Wait for update functions to be populated
-    if not update_callbacks_ready.wait(timeout=1.0):
-        return
-
-    if not update_callbacks:
-        return
-
-    update_items, update_header = update_callbacks[0]
-
-    # Fetch GitHub issues (independent of git fetch - happens in parallel)
-    github_issues = fetch_issues(main_repo)
-    if github_issues is None:
-        # Fetch failed - show error in header (but keep cached issues)
-        update_header(f"{base_header} <red>(GitHub issues failed)</red>")
-        return
-
-    # Fetch succeeded (may be empty if all issues closed)
-    # We need to update the list to remove any stale cached issues
-    # Always update to remove stale cached issues (even if there are none)
-    # Rebuild to get current state (with dirty checks from fetch thread)
-    items_with_issues, _ = _build_fuzzy_items(
-        main_repo, current_worktree_branch, preselect_branch
-    )
-    # Update with issues (update_items merge logic will remove stale items)
-    update_items(items_with_issues)
+def refine_issues(
+    main_repo: Path, sections: PickerItems, cancel: threading.Event
+) -> list[FuzzyItem] | None:
+    """Add GitHub issues (cached, refreshed when stale); None keeps the list."""
+    found = facts.issues(main_repo)
+    if found is None or cancel.is_set():
+        return None
+    sections.issues = found
+    return sections.compose()[0]
 
 
 @dataclass
@@ -354,46 +283,6 @@ def _build_header(agent_num: int, state: _PickerState, rt: RuntimeSettings) -> s
     )
 
 
-def _start_background_refreshes(
-    main_repo: Path,
-    current_worktree_branch: str | None,
-    preselect_branch: str | None,
-    base_header: str,
-) -> tuple[list, threading.Event]:
-    """Start the dirty-status and GitHub-issues background refresh threads."""
-    update_callbacks: list = []
-    update_callbacks_ready = threading.Event()
-
-    fetch_thread = threading.Thread(
-        target=_refresh_dirty_status,
-        args=(
-            main_repo,
-            current_worktree_branch,
-            base_header,
-            update_callbacks,
-            update_callbacks_ready,
-        ),
-        daemon=True,
-    )
-    fetch_thread.start()
-
-    issues_thread = threading.Thread(
-        target=_refresh_github_issues,
-        args=(
-            main_repo,
-            current_worktree_branch,
-            preselect_branch,
-            base_header,
-            update_callbacks,
-            update_callbacks_ready,
-        ),
-        daemon=True,
-    )
-    issues_thread.start()
-
-    return update_callbacks, update_callbacks_ready
-
-
 def pick_worktree(
     agent_num: int,
     preselect_branch: str | None = None,
@@ -435,26 +324,20 @@ def pick_worktree(
     )
 
     while True:
-        # Build initial items immediately (fast version - skips slow git operations)
-        items, initial_selection = _build_fuzzy_items_fast(
+        # One spawn, then the refiners fill in summaries, branches and issues.
+        sections, items, initial_selection = first_paint(
             main_repo, current_worktree_branch, state.preselect_branch
         )
-
-        base_header = _build_header(agent_num, state, rt)
-        # Start with "Fetching..." indicator
-        header_with_indicator = f"{base_header} <dim>(Fetching...)</dim>"
-
-        update_callbacks, update_callbacks_ready = _start_background_refreshes(
-            main_repo, current_worktree_branch, state.preselect_branch, base_header
+        refiners = (
+            functools.partial(refine_git, main_repo, sections),
+            functools.partial(refine_issues, main_repo, sections),
         )
 
-        # Show fuzzy finder immediately with fetching indicator
-        # Update functions will be populated in update_callbacks before app.run()
         skip_perms_indicator = "ON" if state.skip_permissions else "OFF"
         selected = fuzzy_select(
             items=items,
             prompt_text=">",
-            header=header_with_indicator,
+            header=_build_header(agent_num, state, rt),
             hint=(
                 "</dim><b>↑↓</b><dim> nav  </dim><b>Enter</b><dim> open  "
                 "</dim><b>^O</b><dim> editor  </dim><b>^D</b><dim> del  "
@@ -473,8 +356,7 @@ def pick_worktree(
             on_ctrl_s=lambda: ACTION_TOGGLE_SKIP_PERMISSIONS,
             on_ctrl_w=lambda: ACTION_CHANGE_WORKDIR,
             on_ctrl_p=lambda: ACTION_CHANGE_PROFILE,
-            update_callbacks=update_callbacks,
-            update_callbacks_ready=update_callbacks_ready,
+            refiners=refiners,
             auto_select_value=resolved_auto_select,
             auto_select_timeout=auto_select_timeout,
         )

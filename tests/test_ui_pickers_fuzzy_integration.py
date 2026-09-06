@@ -2,8 +2,8 @@
 
 Unlike ``tests/test_ui_pickers_fuzzy.py`` (which mocks ``Application`` entirely), these
 tests run the real ``prompt_toolkit`` event loop against a pipe input and a
-``DummyOutput``, so the key bindings, filtering, rendering callbacks, update
-callbacks, and auto-select timer are all exercised for real.
+``DummyOutput``, so the key bindings, filtering, rendering callbacks,
+refiners, and auto-select timer are all exercised for real.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import time
 from typing import Any
 
 import pytest
-from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
@@ -43,13 +42,31 @@ DEFAULT_ITEMS = [
 
 def _run_with_input(inp: PipeInput, **kwargs: Any) -> str | None:
     """Run ``fuzzy_select`` against an already-populated pipe input."""
-    from unittest.mock import patch
+    return fuzzy_select(input=inp, output=DummyOutput(), **kwargs)
 
-    with (
-        create_app_session(input=inp, output=DummyOutput()),
-        patch("hive_cli.ui.pickers.fuzzy.create_output", return_value=DummyOutput()),
-    ):
-        return fuzzy_select(**kwargs)
+
+def _run_in_thread(inp: PipeInput, **kwargs: Any) -> tuple[threading.Thread, dict]:
+    """Start ``fuzzy_select`` on a worker thread; the result lands in the dict."""
+    holder: dict[str, str | None] = {}
+
+    def worker() -> None:
+        holder["value"] = _run_with_input(inp, **kwargs)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return thread, holder
+
+
+def _finish(inp: PipeInput, thread: threading.Thread, keys: str) -> None:
+    """Send ``keys`` and wait for the picker; never leave a hung app behind."""
+    try:
+        inp.send_text(keys)
+        thread.join(timeout=3)
+    finally:
+        if thread.is_alive():
+            inp.send_text(CTRL_C)
+            thread.join(timeout=3)
+    assert not thread.is_alive(), "picker thread did not finish in time"
 
 
 def run_picker(keys: str, **kwargs: Any) -> str | None:
@@ -299,146 +316,148 @@ class TestCallbackBoundKeys:
 
 
 # ---------------------------------------------------------------------------
-# update_callbacks / update_callbacks_ready (cross-thread updates)
+# Refiners (run off the loop after the first paint, merged with update_items)
 # ---------------------------------------------------------------------------
 
 
-class TestDynamicUpdates:
-    def test_update_items_and_header_from_another_thread(self) -> None:
-        """Start the picker with no queued keys, wait for callbacks to be
-        registered, mutate items/header from the test thread, then send Enter
-        and confirm the selection reflects the updated item list.
-        """
-        callbacks: list[tuple[Any, Any]] = []
-        ready = threading.Event()
-        result_holder: dict[str, str | None] = {}
+class TestRefiners:
+    def test_refiner_updates_items_off_the_picker_thread(self) -> None:
+        refined = threading.Event()
+        seen: dict[str, Any] = {}
 
-        initial_items = make_items(("alpha", "a"), ("beta", "b"))
-        updated_items = make_items(("delta", "d"), ("epsilon", "e"))
+        def refiner(cancel: threading.Event) -> list[FuzzyItem]:
+            seen["thread"] = threading.current_thread()
+            seen["cancel_type"] = type(cancel)
+            refined.set()
+            return make_items(("alpha", "a"), ("beta", "b"), ("gamma", "g"))
 
         with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=make_items(("alpha", "a")), refiners=[refiner]
+            )
+            assert refined.wait(timeout=3), "refiner never ran"
+            time.sleep(0.2)  # let the loop merge the result before we move
+            _finish(inp, thread, f"{DOWN}{ENTER}")
 
-            def worker() -> None:
-                result_holder["value"] = _run_with_input(
-                    inp,
-                    items=initial_items,
-                    update_callbacks=callbacks,
-                    update_callbacks_ready=ready,
-                )
+        # Down moved onto the appended "beta": the refinement was applied.
+        assert holder["value"] == "b"
+        assert seen["thread"] is not thread
+        assert seen["thread"] is not threading.main_thread()
+        assert seen["cancel_type"] is threading.Event
 
-            thread = threading.Thread(target=worker, daemon=True)
-            thread.start()
-            try:
-                assert ready.wait(timeout=3), "update_callbacks never became ready"
-                update_items, update_header = callbacks[0]
+    def test_enter_after_refinement_selects_first_item(self) -> None:
+        refined = threading.Event()
 
-                # Mutating from the "main" thread must be safe (uses app.invalidate()).
-                update_items(updated_items)
-                update_header("dynamically updated header")
-
-                inp.send_text(ENTER)
-                thread.join(timeout=3)
-            finally:
-                if thread.is_alive():
-                    # Don't leave a hung app/thread behind even if an
-                    # assertion above already failed.
-                    inp.send_text(CTRL_C)
-                    thread.join(timeout=3)
-
-            assert not thread.is_alive(), "picker thread did not finish in time"
-
-        # First item of the newly-appended set is selected (index reset to 0
-        # by _filter_items after update_items merges the new list in).
-        assert result_holder["value"] == "d"
-
-    def test_update_items_preserves_selection_of_still_present_item(self) -> None:
-        """If the currently-selected value is still present after an update,
-        selection should follow it rather than resetting to the top.
-        """
-        callbacks: list[tuple[Any, Any]] = []
-        ready = threading.Event()
-        result_holder: dict[str, str | None] = {}
-
-        initial_items = make_items(("alpha", "a"), ("beta", "b"), ("gamma", "g"))
-        # "beta" (value "b") remains; "gamma" is dropped, "delta" is added.
-        updated_items = make_items(("alpha", "a"), ("beta", "b"), ("delta", "d"))
+        def refiner(cancel: threading.Event) -> list[FuzzyItem]:
+            refined.set()
+            return make_items(("alpha", "a"), ("beta", "b"))
 
         with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=make_items(("alpha", "a")), refiners=[refiner]
+            )
+            assert refined.wait(timeout=3)
+            _finish(inp, thread, ENTER)
+        assert holder["value"] == "a"
 
-            def worker() -> None:
-                result_holder["value"] = _run_with_input(
-                    inp,
-                    items=initial_items,
-                    # Preselect "beta" (index 1) by construction rather than
-                    # sending Down and racing the app's key processing against
-                    # the update_items() call below.
-                    initial_selection=1,
-                    update_callbacks=callbacks,
-                    update_callbacks_ready=ready,
-                )
+    def test_refiner_preserves_selection_of_still_present_item(self) -> None:
+        refined = threading.Event()
 
-            thread = threading.Thread(target=worker, daemon=True)
-            thread.start()
-            try:
-                assert ready.wait(timeout=3), "update_callbacks never became ready"
-                update_items, _update_header = callbacks[0]
-
-                update_items(updated_items)
-
-                inp.send_text(ENTER)
-                thread.join(timeout=3)
-            finally:
-                if thread.is_alive():
-                    inp.send_text(CTRL_C)
-                    thread.join(timeout=3)
-
-            assert not thread.is_alive(), "picker thread did not finish in time"
-
-        assert result_holder["value"] == "b"
-
-    def test_update_items_refreshes_metadata_of_unchanged_item(self) -> None:
-        """When a still-present item's meta/style changes, update_items should
-        replace it in place (covers the "metadata changed" branch) while its
-        text/value/position stay the same.
-        """
-        callbacks: list[tuple[Any, Any]] = []
-        ready = threading.Event()
-        result_holder: dict[str, str | None] = {}
-
-        initial_items = [FuzzyItem(text="alpha", value="a", meta="clean")]
-        updated_items = [
-            FuzzyItem(text="alpha", value="a", meta="dirty", style="fg:red")
-        ]
+        def refiner(cancel: threading.Event) -> list[FuzzyItem]:
+            refined.set()
+            # "beta" remains; "gamma" is dropped, "delta" is added.
+            return make_items(("alpha", "a"), ("beta", "b"), ("delta", "d"))
 
         with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp,
+                items=make_items(("alpha", "a"), ("beta", "b"), ("gamma", "g")),
+                initial_selection=1,
+                refiners=[refiner],
+            )
+            assert refined.wait(timeout=3)
+            time.sleep(0.2)
+            _finish(inp, thread, ENTER)
+        assert holder["value"] == "b"
 
-            def worker() -> None:
-                result_holder["value"] = _run_with_input(
-                    inp,
-                    items=initial_items,
-                    update_callbacks=callbacks,
-                    update_callbacks_ready=ready,
-                )
+    def test_refiner_refreshes_metadata_in_place(self) -> None:
+        refined = threading.Event()
 
-            thread = threading.Thread(target=worker, daemon=True)
-            thread.start()
-            try:
-                assert ready.wait(timeout=3), "update_callbacks never became ready"
-                update_items, _update_header = callbacks[0]
+        def refiner(cancel: threading.Event) -> list[FuzzyItem]:
+            refined.set()
+            return [FuzzyItem(text="alpha", value="a", meta="dirty", style="fg:red")]
 
-                update_items(updated_items)
+        with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp,
+                items=[FuzzyItem(text="alpha", value="a", meta="clean")],
+                refiners=[refiner],
+            )
+            assert refined.wait(timeout=3)
+            time.sleep(0.2)
+            _finish(inp, thread, ENTER)
+        assert holder["value"] == "a"
 
-                inp.send_text(ENTER)
-                thread.join(timeout=3)
-            finally:
-                if thread.is_alive():
-                    inp.send_text(CTRL_C)
-                    thread.join(timeout=3)
+    def test_refiner_returning_none_keeps_items(self) -> None:
+        with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=DEFAULT_ITEMS, refiners=[lambda cancel: None]
+            )
+            time.sleep(0.2)
+            _finish(inp, thread, f"{DOWN}{ENTER}")
+        assert holder["value"] == "b"
 
-            assert not thread.is_alive(), "picker thread did not finish in time"
+    def test_failing_refiner_is_ignored(self) -> None:
+        def refiner(cancel: threading.Event) -> list[FuzzyItem]:
+            raise RuntimeError("git exploded")
 
-        # Same value selected; the metadata swap doesn't change what Enter picks.
-        assert result_holder["value"] == "a"
+        with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=DEFAULT_ITEMS, refiners=[refiner]
+            )
+            time.sleep(0.2)
+            _finish(inp, thread, ENTER)
+        assert holder["value"] == "a"
+
+    def test_refiners_are_cancelled_on_exit(self) -> None:
+        started = threading.Event()
+        seen: dict[str, Any] = {}
+
+        def refiner(cancel: threading.Event) -> None:
+            started.set()
+            seen["cancelled"] = cancel.wait(2)
+            return None
+
+        with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=DEFAULT_ITEMS, refiners=[refiner]
+            )
+            assert started.wait(timeout=3)
+            before = time.monotonic()
+            # Ctrl+C, not Escape: prompt_toolkit waits ttimeoutlen + timeoutlen
+            # (1.5 s) after a lone ESC byte before acting on it.
+            _finish(inp, thread, CTRL_C)
+            assert time.monotonic() - before < 1.0
+        assert holder["value"] is None
+        assert seen.get("cancelled") is True
+
+    def test_refiner_that_ignores_cancel_does_not_delay_exit(self) -> None:
+        started = threading.Event()
+
+        def refiner(cancel: threading.Event) -> None:
+            started.set()
+            time.sleep(3)  # a hung `git fetch` stand-in
+            return None
+
+        with create_pipe_input() as inp:
+            thread, holder = _run_in_thread(
+                inp, items=DEFAULT_ITEMS, refiners=[refiner]
+            )
+            assert started.wait(timeout=3)
+            inp.send_text(ENTER)
+            thread.join(timeout=1.5)
+            assert not thread.is_alive(), "exit waited for the refiner thread"
+        assert holder["value"] == "a"
 
 
 # ---------------------------------------------------------------------------
