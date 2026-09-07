@@ -1,16 +1,24 @@
 """Tests for hive_cli.services.session: stale pane-socket cleanup on start,
-and attach_argv()'s layout resolution (F2: renders "agent" per session)."""
+attach_argv()'s layout resolution (F2: renders "agent" per session), and the
+F3 on-demand tabs/panes/floating-shell/control-plane-toggle functions."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fakes import FakeMux
 
 from hive_cli.config.schema import ZellijConfig
 from hive_cli.config.settings import HiveSettings
 from hive_cli.core import paths
+from hive_cli.core.errors import HiveError
+from hive_cli.git.worktree import WorktreeInfo
+from hive_cli.mux.base import PaneInfo
 from hive_cli.services import session
+from hive_cli.state.pane_state import PaneState
+from hive_cli.state.server import PaneStateServer
 
 
 def _start(mux, name):
@@ -132,3 +140,210 @@ class TestAttachArgv:
             None, "s", mux=mux, hive="/opt/hive", settings=_settings()
         )
         assert cmd == ["fake-attach", "s", ""]
+
+
+# ---------------------------------------------------------------------------
+# F3: on-demand tabs/panes, floating shell, control-plane toggle
+# ---------------------------------------------------------------------------
+
+
+def _pane(id_: str, tab_id: str, *, focused: bool = False) -> PaneInfo:
+    return PaneInfo(
+        id=id_,
+        tab_id=tab_id,
+        title="",
+        command="",
+        cwd="",
+        focused=focused,
+        exited=False,
+        suspended=False,
+    )
+
+
+def _live(session_name: str, pane_id: str, hive_pane_id: int) -> PaneStateServer:
+    return PaneStateServer(
+        paths.pane_sock(session_name, pane_id),
+        PaneState(session=session_name, pane_id=pane_id, hive_pane_id=hive_pane_id),
+    )
+
+
+@pytest.fixture
+def hive_path():
+    with patch(
+        "hive_cli.services.session.paths.hive_executable", return_value="/opt/hive"
+    ):
+        yield "/opt/hive"
+
+
+def test_new_agent_pane_splits_when_room(hive_path):
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        pane_id = session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+
+    calls = mux.named("new_pane")
+    assert len(calls) == 1
+    _name, args, kwargs = calls[0]
+    argv = args[0]
+    assert argv[:6] == (
+        "/usr/bin/env",
+        "HIVE_PANE_ID=2",
+        "HIVE_PANE_LABEL=Bohdan",
+        "/opt/hive",
+        "run",
+        "--restart",
+    )
+    assert kwargs["direction"] == "right"
+    assert kwargs["tab_id"] == "t1"
+    assert pane_id
+
+
+def test_new_agent_pane_opens_tab_when_full(hive_path):
+    mux = FakeMux(session="s", panes=[_pane("3", "t1"), _pane("4", "t1")])
+    with _live("s", "3", 1), _live("s", "4", 2):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+
+    assert mux.named("new_pane") == []
+    calls = mux.named("new_tab")
+    assert len(calls) == 1
+    spec = calls[0][1][0]
+    assert spec.name == "agents"
+    assert len(spec.panes) == 1
+    assert spec.panes[0].env == (("HIVE_PANE_ID", "3"), ("HIVE_PANE_LABEL", "Chris"))
+
+
+def test_new_agent_pane_passes_agent_profile_branch(hive_path):
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux,
+            agent="codex",
+            profile="work",
+            branch="feat",
+            settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2)),
+        )
+
+    argv = mux.named("new_pane")[0][1][0]
+    assert list(argv[-6:]) == ["-a", "codex", "-p", "work", "-w", "feat"]
+
+
+def test_open_tab_bundled_and_user(hive_path):
+    from hive_cli.config.schema import PaneConfig, TabConfig
+
+    mux = FakeMux(session="s")
+    session.open_tab("git", mux=mux)
+    assert mux.named("new_tab")[0][1][0].name == "git"
+
+    custom = HiveSettings(
+        tabs={"custom": TabConfig(panes=[PaneConfig(name="x", command="true")])}
+    )
+    with patch("hive_cli.services.session.get_settings", return_value=custom):
+        session.open_tab("custom", mux=mux)
+    assert mux.named("new_tab")[1][1][0].name == "custom"
+
+
+def test_open_tab_unknown_is_hive_error(hive_path):
+    mux = FakeMux(session="s")
+    with pytest.raises(HiveError):
+        session.open_tab("does-not-exist", mux=mux)
+
+
+def test_open_tab_agents_uses_next_free_pane_id(hive_path):
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.open_tab("agents", mux=mux)
+
+    spec = mux.named("new_tab")[0][1][0]
+    assert spec.name == "agents"
+    assert len(spec.panes) == HiveSettings().zellij.agents_per_tab
+    assert spec.panes[0].env[0] == ("HIVE_PANE_ID", "2")
+
+
+def test_resolve_here_matrix(tmp_path):
+    main_repo = (tmp_path / "main").resolve()
+    main_repo.mkdir()
+    wt = (tmp_path / "wt").resolve()
+    wt.mkdir()
+    outer = (tmp_path / "wt-parent").resolve()
+    inner = outer / "wt-child"
+    inner.mkdir(parents=True)
+    worktrees = [
+        WorktreeInfo(branch="feat", path=wt),
+        WorktreeInfo(branch="outer", path=outer),
+        WorktreeInfo(branch="inner", path=inner),
+    ]
+
+    assert session.resolve_here(wt, main_repo, worktrees) == wt
+    assert session.resolve_here(wt / "sub", main_repo, worktrees) == wt
+    assert session.resolve_here(main_repo / "sub", main_repo, worktrees) == main_repo
+    assert session.resolve_here(inner / "deep", main_repo, worktrees) == inner
+    outside = Path("/definitely-not-under-any-candidate-hive-test")
+    assert session.resolve_here(outside, main_repo, worktrees) is None
+
+
+def test_floating_shell_here_uses_popup(tmp_path, monkeypatch):
+    main_repo = (tmp_path / "main").resolve()
+    main_repo.mkdir()
+    monkeypatch.chdir(main_repo)
+    expected_cwd = str(Path.cwd())
+
+    with (
+        patch("hive_cli.services.session.get_main_repo", return_value=main_repo),
+        patch("hive_cli.services.session.list_worktrees", return_value=[]),
+    ):
+        mux = FakeMux(session="s")
+        session.floating_shell(mux=mux, here=True)
+
+    _name, args, kwargs = mux.named("popup")[0]
+    assert kwargs["cwd"] == expected_cwd
+    assert kwargs["name"] == "shell"
+
+
+def test_floating_shell_here_outside_raises(tmp_path, monkeypatch):
+    main_repo = (tmp_path / "main").resolve()
+    main_repo.mkdir()
+    outside = (tmp_path / "outside").resolve()
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    with (
+        patch("hive_cli.services.session.get_main_repo", return_value=main_repo),
+        patch("hive_cli.services.session.list_worktrees", return_value=[]),
+    ):
+        mux = FakeMux(session="s")
+        with pytest.raises(HiveError):
+            session.floating_shell(mux=mux, here=True)
+
+
+def test_toggle_control_plane_focuses_existing():
+    with PaneStateServer(paths.control_sock("s"), PaneState(session="s", pane_id="9")):
+        mux = FakeMux(session="s")
+        assert session.toggle_control_plane(mux=mux, session="s") is True
+    assert mux.named("focus_pane") == [("focus_pane", ("9",), {})]
+
+
+def test_toggle_control_plane_when_absent_returns_false():
+    mux = FakeMux(session="s")
+    assert session.toggle_control_plane(mux=mux, session="s") is False
+    assert mux.named("focus_pane") == []
+
+
+def test_hold_waits_then_execs():
+    prompts: list[str] = []
+    waited: list[int] = []
+    execs: list[tuple[str, list[str]]] = []
+
+    code = session.hold(
+        ["/opt/hive", "run"],
+        prompt=prompts.append,
+        wait=lambda: waited.append(1),
+        exec_=lambda prog, argv: execs.append((prog, argv)),
+    )
+
+    assert code == 0
+    assert waited == [1]
+    assert execs == [("/opt/hive", ["/opt/hive", "run"])]
+    assert prompts == ["[hive] press Enter to start: /opt/hive run"]

@@ -12,9 +12,8 @@ from ..core.errors import HiveError
 
 OPS: dict[str, Callable[..., Any]] = {}
 
-# Extended as each service module lands within this step; by the end of A0
-# this covers worktrees, status, tasks, handoffs.
-_MODULES: tuple[str, ...] = ()
+# Extended as each service module registers @op-decorated functions.
+_MODULES: tuple[str, ...] = ("session",)
 
 
 def op(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:

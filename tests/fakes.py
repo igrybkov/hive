@@ -15,8 +15,8 @@ class FakeMux:
         self.panes, self.tabs = list(panes), list(tabs)
         self._next = 100
 
-    def _rec(self, name, *args, **kw):
-        self.calls.append((name, args, kw))
+    def _rec(self, op, *args, **kw):
+        self.calls.append((op, args, kw))
 
     def named(self, name):  # helper for assertions
         return [c for c in self.calls if c[0] == name]
