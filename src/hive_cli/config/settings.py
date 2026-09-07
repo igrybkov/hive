@@ -23,6 +23,7 @@ from .schema import (
     AgentsConfig,
     GitHubConfig,
     ResumeConfig,
+    TabConfig,
     WorktreesConfig,
     ZellijConfig,
 )
@@ -84,6 +85,7 @@ class HiveSettings(HiveBaseSettings):
     zellij: Annotated[ZellijConfig, Field(default_factory=ZellijConfig)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
+    tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
 
     @classmethod
     def settings_customise_sources(

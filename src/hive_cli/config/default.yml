@@ -129,12 +129,19 @@ worktrees:
       if_exists: "pyproject.toml"
 
 zellij:
-  # Multi-agent layout bundled with this package. Also accepts a layout name
-  # from ~/.config/zellij/layouts/ or an explicit path (see resolve_layout()
-  # in layout/resolve.py). Set to null for Zellij's built-in default.
+  # "agent" renders a hive-owned model layout (layout/tabs.py:session_spec)
+  # on every `hive zellij` start: one tab, agents_per_tab agent panes plus a
+  # control_plane column. "agent-16" is the old hand-maintained 16-pane
+  # session. Also accepts a layout name from ~/.config/zellij/layouts/ or an
+  # explicit path (see resolve_layout() in layout/resolve.py). Set to null
+  # for Zellij's built-in default.
   layout: "agent"
   session_name: "{repo}"
-  # Labels for agent panes c1..c16, in the bundled layout's order. A `hive run`
+  # Agent panes in the "agent" layout's tab: 1 or 2.
+  agents_per_tab: 2
+  # Where the status board sits in the "agent" layout's tab: right, bottom, none.
+  control_plane: "right"
+  # Labels for agent panes c1..c16, in pane-number order. A `hive run`
   # started on demand (outside the layout) takes the first free pane number
   # and its label from here.
   pane_labels:
@@ -162,3 +169,7 @@ github:
 # Additional directories to pass to the agent via its extra_dirs_flag.
 # Relative paths resolve against the main repo root.
 extra_dirs: []
+
+# User-defined tool tabs: name -> {panes: [{name, command, cwd?, size?, suspended?}]}.
+# A name matching a bundled tab (layout/tabs.py:BUNDLED) overrides it.
+tabs: {}

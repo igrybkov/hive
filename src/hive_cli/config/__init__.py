@@ -53,8 +53,10 @@ from .schema import (
     AgentsConfig,
     GitHubConfig,
     HiveConfig,
+    PaneConfig,
     PostCreateCommand,
     ResumeConfig,
+    TabConfig,
     WorktreesConfig,
     ZellijConfig,
 )
@@ -139,8 +141,10 @@ __all__ = [
     "AgentsConfig",
     "GitHubConfig",
     "HiveConfig",
+    "PaneConfig",
     "PostCreateCommand",
     "ResumeConfig",
+    "TabConfig",
     "WorktreesConfig",
     "ZellijConfig",
     # Loader utilities

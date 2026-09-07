@@ -175,12 +175,17 @@ class ZellijConfig(HiveBaseSettings):
             bundled layout (`c1: Anton` -> "Anton"). A `hive run` started on
             demand (outside the layout) takes the first free pane number and
             its label from this list.
+        agents_per_tab: Agent panes in the rendered "agent" layout's tab (1 or 2).
+        control_plane: Where the `hive status --watch --compact` pane sits in
+            the rendered "agent" layout's tab: "right", "bottom", or "none".
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_ZELLIJ_")
 
     layout: str | None = "agent"
     session_name: str = "{repo}"
+    agents_per_tab: int = 2
+    control_plane: str = "right"
     pane_labels: list[str] = [
         "Anton",
         "Bohdan",
@@ -199,6 +204,49 @@ class ZellijConfig(HiveBaseSettings):
         "Orest",
         "Petro",
     ]
+
+    @field_validator("agents_per_tab")
+    @classmethod
+    def validate_agents_per_tab(cls, v: int) -> int:
+        if v not in (1, 2):
+            raise ValueError("zellij.agents_per_tab must be 1 or 2")
+        return v
+
+    @field_validator("control_plane")
+    @classmethod
+    def validate_control_plane(cls, v: str) -> str:
+        if v not in ("right", "bottom", "none"):
+            raise ValueError("zellij.control_plane must be right, bottom, or none")
+        return v
+
+
+class PaneConfig(BaseModel):
+    """A single pane in a user-defined `tabs:` entry.
+
+    Attributes:
+        name: Pane name shown in the Zellij tab bar.
+        command: Argv to run in the pane. A string is split with
+            `shlex.split`; empty ("" or []) makes a plain shell pane.
+        cwd: Working directory for the pane.
+        size: Zellij pane size ("30%" or "20" cells).
+        suspended: Start the pane suspended (Enter to launch).
+    """
+
+    name: str
+    command: str | list[str] = ""
+    cwd: str | None = None
+    size: str | None = None
+    suspended: bool = False
+
+
+class TabConfig(BaseModel):
+    """A user-defined tool tab, overriding or adding to `layout.tabs.BUNDLED`.
+
+    Attributes:
+        panes: Panes making up the tab.
+    """
+
+    panes: Annotated[list[PaneConfig], Field(default_factory=list)]
 
 
 class GitHubConfig(HiveBaseSettings):
@@ -229,11 +277,14 @@ class HiveConfig(BaseModel):
         github: GitHub integration configuration.
         extra_dirs: Additional directories to pass to the agent.
             Relative paths are resolved against the main repo root.
+        tabs: User-defined tool tabs, keyed by name (override or add to
+            `layout.tabs.BUNDLED`).
     """
 
     agents: Annotated[AgentsConfig, Field(default_factory=AgentsConfig)]
     resume: Annotated[ResumeConfig, Field(default_factory=ResumeConfig)]
     worktrees: Annotated[WorktreesConfig, Field(default_factory=WorktreesConfig)]
     zellij: Annotated[ZellijConfig, Field(default_factory=ZellijConfig)]
+    tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]

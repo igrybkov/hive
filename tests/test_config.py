@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 from conftest import git
 
 from hive_cli.config import (
@@ -648,3 +649,74 @@ class TestWorktreesFetchInterval:
         monkeypatch.setenv("HIVE_WORKTREES_FETCH_INTERVAL", "30")
         reset_settings()
         assert get_settings().worktrees.fetch_interval == 30
+
+
+class TestZellijLayoutConfig:
+    def test_defaults(self):
+        from hive_cli.config import get_settings
+
+        settings = get_settings()
+        assert settings.zellij.agents_per_tab == 2
+        assert settings.zellij.control_plane == "right"
+
+    def test_agents_per_tab_rejects_invalid_value(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
+
+        from hive_cli.config import load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("zellij:\n  agents_per_tab: 3\n")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            with pytest.raises(ValidationError):
+                load_config()
+
+    def test_control_plane_rejects_invalid_value(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
+
+        from hive_cli.config import load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("zellij:\n  control_plane: sideways\n")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            with pytest.raises(ValidationError):
+                load_config()
+
+
+class TestTabsConfig:
+    def test_default_empty(self):
+        from hive_cli.config import get_settings
+
+        assert get_settings().tabs == {}
+
+    def test_parsed_into_tab_config(self, tmp_path, monkeypatch):
+        from hive_cli.config import TabConfig, load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("""
+tabs:
+  git:
+    panes:
+      - name: lazygit
+        command: "lazygit"
+        size: "70%"
+      - name: git-shell
+        command: ["fish"]
+        suspended: true
+""")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            config = load_config()
+
+        assert isinstance(config.tabs["git"], TabConfig)
+        assert config.tabs["git"].panes[0].name == "lazygit"
+        assert config.tabs["git"].panes[0].command == "lazygit"
+        assert config.tabs["git"].panes[1].command == ["fish"]
+        assert config.tabs["git"].panes[1].suspended is True
