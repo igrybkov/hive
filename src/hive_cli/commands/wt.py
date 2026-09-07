@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
@@ -282,22 +283,50 @@ def base():
     print(str(base_path))
 
 
+def _here_branch() -> str | None:
+    """Branch of the worktree (or 'main') containing the current directory."""
+    from ..services import session
+
+    main_repo = get_main_repo()
+    worktrees = list_worktrees(main_repo)
+    resolved = session.resolve_here(Path.cwd(), main_repo, worktrees)
+    if resolved is None:
+        return None
+    return next((wt.branch for wt in worktrees if wt.path == resolved), None)
+
+
 @wt_app.command(name="exec")
 def exec_cmd(
-    command: Annotated[
+    *args: Annotated[
         str,
+        Parameter(
+            allow_leading_hyphen=True,
+            help="Command and args to execute (alternative to -c; put after --).",
+        ),
+    ],
+    command: Annotated[
+        str | None,
         Parameter(
             name=["--command", "-c"],
             help="Command to execute (shell string).",
         ),
-    ],
+    ] = None,
     worktree: Annotated[
         str | None,
         Parameter(
             name=["--worktree", "-w"],
-            help="Run in worktree. Use '-' for selection, or specify branch.",
+            help=(
+                "Run in worktree. Use '-' for selection, 'here' for the "
+                "worktree of the current directory, or a branch name."
+            ),
         ),
     ] = None,
+    here: Annotated[
+        bool,
+        Parameter(
+            help="Run in the worktree of the current directory (same as -w here)."
+        ),
+    ] = False,
     restart: Annotated[
         bool,
         Parameter(
@@ -325,6 +354,7 @@ def exec_cmd(
         hive wt exec -c 'ls -la'                    # Run in git root
         hive wt exec -c 'npm test' -w=-             # Interactive worktree selection
         hive wt exec -c 'npm test' -w feature-123   # Specific worktree
+        hive wt exec --here -- npm test             # Run in this worktree
         hive wt exec -c 'make watch' --restart      # Auto-restart (re-select each time)
         hive wt exec -c 'make watch' --restart -w feat  # Restart in specific worktree
         hive wt exec -c 'date' --restart --restart-delay 1
@@ -337,16 +367,26 @@ def exec_cmd(
 
     _check_worktrees_enabled()
 
-    # Parse the command string into a list
-    try:
-        cmd = shlex.split(command)
-    except ValueError as e:
-        error(f"Invalid command: {e}")
-        sys.exit(1)
+    if command is not None:
+        try:
+            cmd = shlex.split(command)
+        except ValueError as e:
+            error(f"Invalid command: {e}")
+            sys.exit(1)
+    else:
+        cmd = list(args)
 
     if not cmd:
         error("Command cannot be empty")
         sys.exit(1)
+
+    if here or worktree == "here":
+        branch = _here_branch()
+        if branch is None:
+            warn("not inside a worktree, choose one")
+            worktree = "-"
+        else:
+            worktree = branch
 
     exit_code = run_in_worktree(
         cmd,

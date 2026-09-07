@@ -8,6 +8,7 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from ..git import get_main_repo
+from ..services import session
 from ..services import status as service_status
 from ..ui import board
 from ..ui.console import out as console
@@ -89,6 +90,15 @@ def status(
         float,
         Parameter(name="--interval", help="Seconds between refreshes in watch mode."),
     ] = 5.0,
+    toggle: Annotated[
+        bool,
+        Parameter(
+            help=(
+                "Focus the running floating control-plane pane, or open one "
+                "(compact watch mode) if none is running. For the Alt+m hotkey."
+            ),
+        ),
+    ] = False,
 ):
     """Display status of all agent worktrees.
 
@@ -101,6 +111,7 @@ def status(
         hive status -w -c        # Compact watch mode
         hive status -w --interval 2   # Refresh every 2 seconds
         hive status -i           # Interactive selection
+        hive status --toggle     # Focus (or open) the floating control plane
 
     Watch mode keybindings:
         Enter    Open interactive worktree picker
@@ -125,7 +136,11 @@ def status(
         Esc      Go back to worktree picker
         q        Quit entirely
     """
-    if interactive and not watch:
+    if toggle:
+        if session.toggle_control_plane():
+            return
+        watch_status(compact=True, interval=interval)
+    elif interactive and not watch:
         # One-shot interactive mode - outputs path to stdout for shell integration
         path = status_picker.interactive_status()
         if path:

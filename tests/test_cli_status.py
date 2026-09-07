@@ -81,6 +81,37 @@ class TestStatusCliInteractiveFlag:
         assert result.exit_code == 1
 
 
+class TestStatusCliToggle:
+    def test_focuses_existing_and_skips_board(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        toggle = mocker.patch(
+            "hive_cli.commands.status.session.toggle_control_plane", return_value=True
+        )
+        watch = mocker.patch("hive_cli.ui.board.watch")
+
+        result = cli_runner.invoke(app, ["status", "--toggle"])
+
+        assert result.exit_code == 0
+        toggle.assert_called_once()
+        watch.assert_not_called()
+
+    def test_opens_compact_board_when_absent(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+    ):
+        mocker.patch(
+            "hive_cli.commands.status.session.toggle_control_plane",
+            return_value=False,
+        )
+        watch = mocker.patch("hive_cli.ui.board.watch", return_value=("q", None))
+
+        result = cli_runner.invoke(app, ["status", "--toggle", "--interval", "2"])
+
+        assert result.exit_code == 0
+        watch.assert_called_once()
+        assert watch.call_args.kwargs["interval"] == 2
+
+
 class TestStatusCliWatch:
     def test_q_ends_watch_without_opening_the_picker(
         self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker

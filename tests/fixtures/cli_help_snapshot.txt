@@ -181,19 +181,24 @@ Usage: hive wt base
 
 Get the base directory for worktrees.
 === hive wt exec --help ===
-Usage: hive wt exec COMMAND [ARGS]
+Usage: hive wt exec [OPTIONS] [ARGS...]
 
 Execute a command in a worktree.
 
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ARGS  Command and args to execute (alternative to -c; put after --).                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
-│ *  COMMAND --command -c            Command to execute (shell string). [required]                 │
-│    WORKTREE --worktree -w          Run in worktree. Use '-' for selection, or specify branch.    │
-│    RESTART --restart --no-restart  Auto-restart after exit. Implies -w=- for interactive         │
-│                                    selection. [default: False]                                   │
-│    RESTART-CONFIRMATION            Wait for Enter before each restart. Implies --restart.        │
-│      --restart-confirmation        [default: False]                                              │
-│      --no-restart-confirmation                                                                   │
-│    RESTART-DELAY --restart-delay   Delay in seconds between restarts (default: 0). [default: 0]  │
+│ --command -c                 Command to execute (shell string).                                  │
+│ --worktree -w                Run in worktree. Use '-' for selection, 'here' for the worktree of  │
+│                              the current directory, or a branch name.                            │
+│ --here --no-here             Run in the worktree of the current directory (same as -w here).     │
+│                              [default: False]                                                    │
+│ --restart --no-restart       Auto-restart after exit. Implies -w=- for interactive selection.    │
+│                              [default: False]                                                    │
+│ --restart-confirmation       Wait for Enter before each restart. Implies --restart. [default:    │
+│   --no-restart-confirmation  False]                                                              │
+│ --restart-delay              Delay in seconds between restarts (default: 0). [default: 0]        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive wt ensure --help ===
 Usage: hive wt ensure AGENT-NUM
@@ -370,6 +375,9 @@ Display status of all agent worktrees.
 │ INTERACTIVE --interactive -i       One-shot interactive selection. Outputs path for shell cd.    │
 │   --no-interactive                 [default: False]                                              │
 │ INTERVAL --interval                Seconds between refreshes in watch mode. [default: 5.0]       │
+│ TOGGLE --toggle --no-toggle        Focus the running floating control-plane pane, or open one    │
+│                                    (compact watch mode) if none is running. For the Alt+m        │
+│                                    hotkey. [default: False]                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive task --help ===
 Usage: hive task COMMAND [ARGS]

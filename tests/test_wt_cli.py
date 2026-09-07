@@ -45,6 +45,80 @@ class TestWtExecCli:
         assert result.exit_code == 1
         assert "does not exist" in result.output
 
+    def test_positional_args_without_dash_c(self, cli_runner, temp_git_repo):
+        with patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe:
+            result = cli_runner.invoke(app, ["wt", "exec", "--", "echo", "hi"])
+        assert result.exit_code == 0
+        _final_command, argv, _env = mock_execvpe.call_args.args
+        assert argv == ["echo", "hi"]
+
+
+class TestWtExecHereCli:
+    def test_here_flag_runs_in_current_worktree(
+        self, cli_runner, temp_git_repo, make_worktree, isolated_worktrees, monkeypatch
+    ):
+        wt_path = make_worktree("feat-a")
+        monkeypatch.chdir(wt_path)
+
+        with patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe:
+            result = cli_runner.invoke(
+                app, ["wt", "exec", "--here", "--", "echo", "hi"]
+            )
+
+        assert result.exit_code == 0
+        mock_execvpe.assert_called_once()
+        final_command, argv, _env = mock_execvpe.call_args.args
+        assert final_command == "echo"
+        assert argv == ["echo", "hi"]
+
+    def test_worktree_here_value_is_equivalent_to_flag(
+        self, cli_runner, temp_git_repo, make_worktree, isolated_worktrees, monkeypatch
+    ):
+        wt_path = make_worktree("feat-b")
+        monkeypatch.chdir(wt_path)
+
+        with patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe:
+            result = cli_runner.invoke(
+                app, ["wt", "exec", "-w", "here", "--", "echo", "hi"]
+            )
+
+        assert result.exit_code == 0
+        mock_execvpe.assert_called_once()
+
+    def test_here_in_main_repo_resolves_to_main(
+        self, cli_runner, temp_git_repo, isolated_worktrees
+    ):
+        with patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe:
+            result = cli_runner.invoke(
+                app, ["wt", "exec", "--here", "--", "echo", "hi"]
+            )
+
+        assert result.exit_code == 0
+        mock_execvpe.assert_called_once()
+
+    def test_here_outside_any_worktree_warns_and_falls_back(
+        self, cli_runner, tmp_path, monkeypatch
+    ):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+
+        # Fully mocked: no real git subprocess (cwd isn't inside any repo)
+        # and the non-interactive branch of the "-w -" fallback is forced,
+        # so this only exercises the warning + fallback wiring, never the
+        # real picker.
+        with (
+            patch("hive_cli.commands.wt.get_main_repo", return_value=tmp_path / "main"),
+            patch("hive_cli.commands.wt.list_worktrees", return_value=[]),
+            patch("hive_cli.ui.flows.worktrees.is_interactive", return_value=False),
+        ):
+            result = cli_runner.invoke(
+                app, ["wt", "exec", "--here", "--", "echo", "hi"]
+            )
+
+        assert "not inside a worktree, choose one" in result.output
+        assert result.exit_code == 1
+
 
 # ---------------------------------------------------------------------------
 # CLI: create / exists / path / cd chain
