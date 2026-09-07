@@ -44,6 +44,16 @@ LAZY_COMMANDS: list[tuple[str, str, str]] = [
         "Manage git worktrees for multi-agent development.",
     ),
     (
+        "pane",
+        "hive_cli.commands.pane:pane_app",
+        "Create and manage agent panes.",
+    ),
+    (
+        "tab",
+        "hive_cli.commands.tab:tab_app",
+        "Open tool tabs and agent tabs on demand.",
+    ),
+    (
         "completion",
         "hive_cli.commands.completion:completion_app",
         "Generate shell completion script.",

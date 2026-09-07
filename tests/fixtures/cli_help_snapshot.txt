@@ -12,9 +12,11 @@ Manage AI coding agents and git worktrees for parallel development.
 │ doctor          Check hive's environment and measure startup and hot-path timings.               │
 │ handoff         Manage branch handoff notes.                                                     │
 │ merge-preview   Preview potential merge conflicts between agent branches.                        │
+│ pane            Create and manage agent panes.                                                   │
 │ rebase-check    Check if agent worktrees need rebasing against default branch.                   │
 │ run             Run AI coding agent in current directory.                                        │
 │ status          Display status of all agent worktrees.                                           │
+│ tab             Open tool tabs and agent tabs on demand.                                         │
 │ task            Manage agent tasks.                                                              │
 │ wt              Manage git worktrees for multi-agent development.                                │
 │ zellij          Open Zellij with AI agent layout.                                                │
@@ -207,6 +209,120 @@ For agent 1, always uses main repo. For other agents, shows interactive selectio
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
 │ *  AGENT-NUM --agent-num  Agent number. [required]                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane --help ===
+Usage: hive pane COMMAND
+
+Create and manage agent panes.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ close       Close a pane by id.                                                                  │
+│ focus       Focus a pane by id.                                                                  │
+│ hold        Wait for Enter, then run COMMAND (start-suspended panes, F6/tmux).                   │
+│ list        List panes in the current session, joined with live hive state.                      │
+│ new         Create a new agent pane.                                                             │
+│ restart     Restart the agent in a pane (its hive run re-selects on the next loop).              │
+│ set-status  Set agent status in the pane title (same as hive zellij set-status).                 │
+│ set-title   Set custom title suffix in the pane title (same as hive zellij set-title).           │
+│ shell       Open a shell in a worktree.                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane new --help ===
+Usage: hive pane new [ARGS]
+
+Create a new agent pane.                                                                            
+
+Splits into the target tab if it has room (zellij.agents_per_tab), else opens a fresh one-pane      
+agents tab. Prints the new pane's id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a          Agent to run.                                                          │
+│ PROFILE --profile -p      Config profile.                                                        │
+│ BRANCH --branch -w        Worktree branch.                                                       │
+│ TAB-ID --tab-id           Target tab id (default: the current tab).                              │
+│ FOCUS --focus --no-focus  Focus the new pane. [default: True]                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane shell --help ===
+Usage: hive pane shell [ARGS]
+
+Open a shell in a worktree.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ WORKTREE --worktree -w             Branch of the worktree to open.                               │
+│ HERE --here --no-here              Use the worktree of the current pane's cwd. [default: False]  │
+│ FLOATING --floating --no-floating  Open as a floating popup instead of a split pane. [default:   │
+│                                    False]                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane list --help ===
+Usage: hive pane list [ARGS]
+
+List panes in the current session, joined with live hive state.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ JSON --json --no-json  Emit JSON. [default: False]                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane focus --help ===
+Usage: hive pane focus ID
+
+Focus a pane by id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane close --help ===
+Usage: hive pane close ID
+
+Close a pane by id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane restart --help ===
+Usage: hive pane restart ID
+
+Restart the agent in a pane (its hive run re-selects on the next loop).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane hold --help ===
+Usage: hive pane hold COMMAND
+
+Wait for Enter, then run COMMAND (start-suspended panes, F6/tmux).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  COMMAND --command --empty-command  Command to run once Enter is pressed. [required]           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane set-status --help ===
+Usage: hive pane set-status [ARGS]
+
+Set agent status in the pane title (same as hive zellij set-status).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ STATUS --status  Agent status (e.g., '[working]').                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane set-title --help ===
+Usage: hive pane set-title [ARGS]
+
+Set custom title suffix in the pane title (same as hive zellij set-title).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ TITLE --title  Custom title suffix.                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive tab --help ===
+Usage: hive tab COMMAND NAME [ARGS]
+
+Open tool tabs and agent tabs on demand.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ list  List available tab names: 'agents', bundled tool tabs, and user-defined tabs.              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  NAME --name               Tab to open: a bundled/user-defined name, or 'agents'. [required]   │
+│    FOCUS --focus --no-focus  Focus the new tab. [default: True]                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive tab list --help ===
+Usage: hive tab list
+
+List available tab names: 'agents', bundled tool tabs, and user-defined tabs.
 === hive completion --help ===
 Usage: hive completion SHELL [ARGS]
 
@@ -428,5 +544,3 @@ Check hive's environment and measure startup and hot-path timings.
 │ TIMING --timing --no-timing  Time each startup phase (import, config, worktree list, status      │
 │                              collect) and count the commands it spawns. [default: False]         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-=== hive --version ===
-0.1.0
