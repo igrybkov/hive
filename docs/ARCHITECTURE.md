@@ -4,9 +4,9 @@ This is the architecture reference `CLAUDE.md` points to. It is copied from
 the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
 redesign (issue #1), not only what A0 built. Package-map entries tagged
-`[F3]`/`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those later
-features. Everything untagged is either already in the tree (built by A0,
-F0, F1, or F2) or is a pre-A0 module the refactor left in place.
+`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those later features.
+Everything untagged is either already in the tree (built by A0, F0, F1, F2,
+or F3) or is a pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -81,7 +81,8 @@ hive_cli/
            views/        Rich renderables: status.py, merge.py, tasks.py (tables, boards, detail panels)
            tui/          Textual control plane: app.py, screens/, widgets/, model.py (build_rows)  [F4]
   commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py doctor.py
-            pane.py tab.py session.py                                                              [F3, F6]
+            pane.py tab.py
+            session.py                                                                             [F6]
   hooks/   entry.py templates.py                                                                   [F5]
 ```
 
@@ -259,13 +260,21 @@ and the `--watch` boards, plus `worktrees.fetch_interval`. F2 (done
 `ZellijMux.new_tab`, and the `agents_per_tab`/`control_plane`/`tabs:`
 config. `zellij.layout: "agent"` now renders a one-tab session instead of
 pointing at the old static 16-pane file, which moved to `agent-16.kdl`
-(`zellij.layout: "agent-16"` reproduces the old session exactly). Still
-missing are the `[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces
-`core/models.py`, `layout/keybinds.py`, `services/watch.py` (see the F2
-divergences below for why the latter two didn't materialize as separate
-files in F2). `services/registry.py` exists as an unwired stub
-(`registry._MODULES = ()`, so `load_all()` is currently a no-op) — a later
-feature finishes hooking it up.
+(`zellij.layout: "agent-16"` reproduces the old session exactly). F3 (done
+2026-09-07) filled in `layout/keybinds.py` (`keybind_spec()`, mapping the
+four on-demand actions to a `KeybindSpec`) and `mux/zellij/keybinds.py`
+(the `keybinds { shared_except "locked" { ... } }` renderer, replacing F2's
+untested inline `_render_keybinds` in `kdl.py`); `layout/tabs.py:session_spec()`
+now wires them in, so every rendered `"agent"` session ships the hotkeys.
+`services/session.py` gained `new_agent_pane`, `open_tab`, `resolve_here`,
+`floating_shell`, `toggle_control_plane` and `hold`, the first four
+registered in `services/registry.OPS` (`registry._MODULES` now loads
+`"session"`, so `load_all()` is no longer a no-op); `commands/pane.py` and
+`commands/tab.py` are the CLI surface over them, and `hive wt exec` gained
+`--here`/a trailing positional argv and `hive status` gained `--toggle`.
+Still missing are the `[F4]`/`[F5]`/`[F6]` entries and `core/models.py`
+(see the F2 divergences below for why it didn't materialize as a separate
+file).
 
 F1 divergences from the package map and the F1 spec, all deliberate:
 
@@ -317,8 +326,11 @@ as-is rather than a new use of `subprocess`:
   terminal for interactive diff paging, not captured.
 
 `commands/session.py` is also pre-listed in `SUBPROCESS_OK`; the file itself
-is `[F3]` work and doesn't exist yet. `mux/zellij/backend.py` is listed too
-but no longer imports `subprocess` (every call goes through `proc.run`).
+is `[F6]` work (a tmux-specific command surface) and doesn't exist yet — F3
+added `commands/pane.py`/`commands/tab.py` instead, per its own spec, and
+neither needs `subprocess` directly (they go through `services/session.py`
+and the `Mux` protocol). `mux/zellij/backend.py` is listed too but no longer
+imports `subprocess` (every call goes through `proc.run`).
 
 F0 divergences from the package map and the F0 spec, all deliberate:
 
@@ -368,7 +380,7 @@ F2 divergences from the package map and the F2 spec, all deliberate:
   keybind rendering is expected to land as `mux/zellij/kdl.py`'s
   `_render_keybinds` (already stubbed there, rendering nothing today) rather
   than a separate `layout/keybinds.py` module — there's no keybind-specific
-  logic yet that would justify its own file.
+  logic yet that would justify its own file. **Superseded by F3** — see below.
 - **`default_tab_template`'s plugin locations have no `zellij:` prefix**
   (`plugin location="tab-bar"`, not `"zellij:tab-bar"`), matching the real
   pre-F2 `agent.kdl` (now `agent-16.kdl`) rather than the F2 spec's
@@ -384,3 +396,41 @@ F2 divergences from the package map and the F2 spec, all deliberate:
   default already fully resolves (and, for `"agent"`, renders) every value;
   the flag exists for discoverability/forward-compatibility rather than
   changing behavior.
+
+F3 divergences from the F3 spec, all deliberate:
+
+- **`layout/keybinds.py` and `mux/zellij/keybinds.py` both exist after
+  all**, correcting the F2 note above's prediction. `KeybindSpec.bindings`'
+  run-option values widened from `dict[str, str]` to `dict[str, str | bool]`
+  so a Run block can render both bare booleans (`close_on_exit true`) and
+  quoted strings (`name "shell"`). The renderer is its own module (not
+  `kdl.py`'s inline `_render_keybinds`, which it replaces) because
+  `kdl.py:render_session_file` needs to call it — `kdl.py -> keybinds.py` is
+  a one-way dependency within `mux/zellij/`, so a `keybinds.py -> kdl.py`
+  import back for the shared string-quoting helper would cycle; `keybinds.py`
+  keeps its own small `_quote` instead of importing `kdl.kdl_string`.
+- **`services/session.hold()` takes `prompt`/`wait`/`exec_` as required (or
+  defaulted-but-never-relied-on) callables**, not the spec's plain
+  `print`/`input`/`os.execvp`. Two independent reasons: `services/` may not
+  call `print`/`input` directly (the architecture guard AST-scans for those
+  calls, `EXIT_PRINT_OK` excludes `services`), and `exec_`'s default value is
+  bound once at `def` time — patching `os.execvp` after import does not
+  intercept a call that goes through the stored default, so any caller that
+  wants a fake exec must pass `exec_=` explicitly (`commands/pane.py`'s
+  `hold` command passes real callables from `ui.console.prompt`/a local
+  `input()`-wrapping function; every test that exercises the default path
+  supplies its own `exec_`, and no test lets the real default run).
+- **`toggle_control_plane()` is real but always returns `False` today.**
+  Nothing before F4 serves `paths.control_sock(session)` — F1's `hive status
+  --watch` doesn't bind a socket there, and F4 is the phase that adds a
+  `ControlServer` for it (see `F4-control-plane.md`). `commands/status.py
+  --toggle` is fully wired (`session.toggle_control_plane()` then falls back
+  to the compact watch board), so the Alt+m keybind works end-to-end, but the
+  F3 spec's own "Alt+m twice focuses the existing control plane" manual
+  check can't hold until F4 lands; it isn't a bug in this branch.
+- **`hive pane shell`'s non-floating case never calls
+  `session.floating_shell`.** That service function always pops up
+  (`mux.popup`); the command resolves the target worktree itself (reusing
+  `session.resolve_here` for `--here`) and calls `mux.new_pane` directly for
+  a split pane, matching the F3 spec's own parenthetical
+  ("non-floating: `mux.new_pane([$SHELL], cwd=…)`").

@@ -118,6 +118,26 @@ zellij:
   layout: "agent-16"
 ```
 
+#### Hotkeys
+
+The rendered `"agent"` session ships four hotkeys — the user's own Zellij
+config is never touched, so they work without a `clear-defaults` and never
+override the user's own bindings:
+
+| Default key   | Action                | Runs                             |
+| ------------- | ---------------------- | --------------------------------- |
+| `Alt a`       | New agent pane          | `hive pane new`                    |
+| `Alt Shift a` | New agents tab           | `hive tab agents`                  |
+| `Alt Shift s` | Floating shell here      | `hive wt exec --here -- $SHELL`    |
+| `Alt m`       | Toggle control plane     | `hive status --toggle`             |
+
+Change or disable them under `zellij.keybinds` in config (see
+[`zellij.keybinds`](#zellijkeybinds) below) — set a key to `null` to disable
+just that one binding, or `enabled: false` to disable all four.
+
+Tool tabs (bundled and user-defined) and agent panes also open on demand
+outside the hotkeys, via `hive tab`/`hive pane` — see below.
+
 #### `hive zellij layout-path`
 
 Print the resolved path (or name) for a Zellij layout — useful for running
@@ -157,6 +177,7 @@ Execute arbitrary commands in worktrees with optional restart loop.
 hive wt exec -c 'ls -la'                    # Run in git root
 hive wt exec -c 'npm test' -w=-             # Interactive worktree selection
 hive wt exec -c 'npm test' -w feature-123   # Specific worktree
+hive wt exec --here -- npm test             # Run in the current pane's worktree
 hive wt exec -c 'make watch' --restart      # Auto-restart (re-select each time)
 hive wt exec -c 'make watch' --restart -w=feat  # Restart in specific worktree
 hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
@@ -164,8 +185,10 @@ hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
 
 **Options:**
 
-- `-c, --command TEXT`: Command to execute (shell string) [required]
-- `-w, --worktree TEXT`: Run in worktree. Use `-` for interactive selection, or specify branch name
+- `-c, --command TEXT`: Command to execute (shell string)
+- Trailing positional args (after `--`): alternative to `-c` — the argv to run directly, no shell
+- `-w, --worktree TEXT`: Run in worktree. Use `-` for interactive selection, `here` for the worktree of the current directory, or specify branch name
+- `--here`: Same as `-w here` — run in the worktree of the current directory. Outside any worktree, warns and falls back to the interactive picker
 - `--restart`: Auto-restart after exit. Implies `-w=-` for interactive worktree selection
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 
@@ -174,6 +197,49 @@ hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
 - `--restart` (no `-w`): Interactive worktree selection on EACH restart
 - `--restart -w feature-123`: Stay in that worktree, no re-selection between restarts
 - `--restart -w=-`: Explicit interactive selection on EACH restart
+
+### `hive pane`
+
+Create and manage agent panes — the CLI surface behind the `Alt a` hotkey
+and `hive pane shell` behind `Alt Shift s` (see [Hotkeys](#hotkeys)).
+
+```bash
+hive pane new                       # split an agent pane into this tab
+hive pane new -a codex -w feat      # ...running codex on branch 'feat'
+hive pane new --tab-id t2           # into a specific tab instead of the current one
+hive pane new --no-focus            # create it without switching focus
+hive pane shell --here              # split shell, cwd in this pane's worktree
+hive pane shell -w feat --floating  # floating popup shell in the 'feat' worktree
+hive pane list                      # panes in this session + their hive state
+hive pane list --json               # same, as JSON
+hive pane focus 3                   # focus pane 3
+hive pane close 3                   # close pane 3
+hive pane restart 3                 # restart the agent running in pane 3
+```
+
+`new` splits into the target tab if it has room for another agent pane
+(`zellij.agents_per_tab`), else it opens a fresh one-pane agents tab —
+prints the new pane's id either way. `hold -- CMD…` (used by the tmux
+backend for start-suspended panes) waits for Enter before running `CMD`.
+`set-status`/`set-title` are the same as `hive zellij set-status`/`set-title`,
+kept under both names.
+
+### `hive tab`
+
+Open tool tabs and agent tabs on demand — the CLI surface behind the
+`Alt Shift a` hotkey.
+
+```bash
+hive tab git              # open the bundled git tab
+hive tab agents           # same as Alt Shift a
+hive tab mytab            # open a user-defined tab from tabs: config
+hive tab agents --no-focus  # open it without switching focus
+hive tab list             # list every openable tab name (bundled + user + agents)
+```
+
+Neither `hive pane` nor `hive tab` blocks: they only ask the multiplexer to
+create the pane/tab and exit — the same `close_on_exit true` shape as the
+hotkeys' own `Run` blocks.
 
 ### Live boards: `--watch`
 
@@ -189,6 +255,10 @@ hive status --watch --compact         # the bundled layout's status pane
 hive merge-preview --watch            # file overlap between agents, live
 hive merge-preview 2 -w --interval 30 # simulated merge for agent 2 every 30 s
 hive task --watch                     # every agent's task file
+hive status --toggle                  # the Alt+m hotkey's target: a floating
+                                       # control-plane board, focusing an
+                                       # existing one instead of opening a
+                                       # second (once F4's control socket exists)
 ```
 
 ### `hive doctor`
@@ -359,6 +429,18 @@ zellij:
   # pane_labels: [Anton, Bohdan, Chris, Dmytro, Emily, Frank, Grygoriy, Henry,
   #               Ihor, Jake, Kateryna, Liam, Mykola, Noah, Orest, Petro]
 
+  # Hotkeys shipped inside the rendered session file (see Hotkeys above). Set
+  # a key to null to disable just that one binding, or enabled: false for all.
+  keybinds:
+    enabled: true
+    new_agent_pane: "Alt a"
+    new_agent_tab: "Alt Shift a"
+    floating_shell: "Alt Shift s"
+    control_plane: "Alt m"
+
+  # Command the floating-shell hotkey runs. null uses $SHELL.
+  floating_shell_command: null
+
 # GitHub integration
 github:
   # Fetch issues assigned to you in worktree picker
@@ -525,6 +607,34 @@ Each item can be:
   by hand) picks the first pane number no other `hive run` in the session
   holds and takes its label from this list, so its title reads like the
   layout's own panes. Env: `HIVE_ZELLIJ_PANE_LABELS` (comma-separated).
+
+#### `zellij.keybinds`
+
+- **Type:** `object`
+- **Default:** the four bindings in [Hotkeys](#hotkeys)
+- **Description:** Hotkeys shipped inside the rendered `"agent"` session
+  file — never the user's own Zellij config.
+  - **`keybinds.enabled`** (`boolean`, default `true`): master switch for all
+    four bindings.
+  - **`keybinds.new_agent_pane`** (`string | null`, default `"Alt a"`):
+    `hive pane new`.
+  - **`keybinds.new_agent_tab`** (`string | null`, default `"Alt Shift a"`):
+    `hive tab agents`.
+  - **`keybinds.floating_shell`** (`string | null`, default `"Alt Shift s"`):
+    `hive wt exec --here`.
+  - **`keybinds.control_plane`** (`string | null`, default `"Alt m"`):
+    `hive status --toggle`.
+
+  A key set to `null` disables just that one binding. Zellij key syntax:
+  `"Alt a"`, `"Alt Shift s"`.
+
+#### `zellij.floating_shell_command`
+
+- **Type:** `string` (optional)
+- **Default:** `null` (uses `$SHELL`)
+- **Description:** Command the floating-shell hotkey (and `hive pane shell
+  --floating`) runs. Split with `shlex` the same way `tabs:` pane commands
+  are.
 
 #### `tabs`
 
