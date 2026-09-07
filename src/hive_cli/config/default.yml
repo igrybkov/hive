@@ -141,6 +141,17 @@ zellij:
   agents_per_tab: 2
   # Where the status board sits in the "agent" layout's tab: right, bottom, none.
   control_plane: "right"
+  # Hotkeys shipped inside the rendered session file (never touches the
+  # user's own Zellij config). Set a key to null to disable just that one
+  # binding, or enabled: false to disable all of them.
+  keybinds:
+    enabled: true
+    new_agent_pane: "Alt a"
+    new_agent_tab: "Alt Shift a"
+    floating_shell: "Alt Shift s"
+    control_plane: "Alt m"
+  # Command the floating-shell hotkey runs; null uses $SHELL.
+  floating_shell_command: null
   # Labels for agent panes c1..c16, in pane-number order. A `hive run`
   # started on demand (outside the layout) takes the first free pane number
   # and its label from here.

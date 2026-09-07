@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import textwrap
 
-from ...layout.model import KeybindSpec, PaneSpec, SessionSpec, TabSpec
+from ...layout.model import PaneSpec, SessionSpec, TabSpec
+from .keybinds import render as render_keybinds
 
 _INDENT = "    "
 
@@ -94,25 +95,13 @@ def render_tab_file(t: TabSpec) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_keybinds(kb: KeybindSpec) -> str:
-    if not kb.bindings:
-        return ""
-    lines = ["keybinds {"]
-    for key, argv, run_opts in kb.bindings:
-        opts = "".join(f" {k}={kdl_string(v)}" for k, v in run_opts.items())
-        args = " ".join(kdl_string(a) for a in argv)
-        lines.append(f'{_INDENT}bind "{key}" {{ Run{opts} {args}; }}')
-    lines.append("}")
-    return "\n".join(lines)
-
-
 def render_session_file(s: SessionSpec, hive: str) -> str:
-    """Full session file: `layout { ... }`, options, and (F3) keybinds."""
+    """Full session file: `layout { ... }`, options, and keybinds (F3)."""
     lines = ["layout {", _DEFAULT_TAB_TEMPLATE]
     lines.extend(render_tab_body(t, indent=1) for t in s.tabs)
     lines.append("}")
     lines.extend(f"{k} {v}" for k, v in s.options)
-    keybinds = _render_keybinds(s.keybinds)
+    keybinds = render_keybinds(s.keybinds)
     if keybinds:
         lines.append(keybinds)
     return "\n".join(lines) + "\n"

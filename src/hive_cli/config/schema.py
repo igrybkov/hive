@@ -159,6 +159,27 @@ class WorktreesConfig(HiveBaseSettings):
         return v
 
 
+class KeybindsConfig(BaseModel):
+    """Hotkeys shipped inside the rendered "agent" session file.
+
+    A key set to None disables that one binding; `enabled: false` disables
+    all of them. Zellij key syntax: "Alt a", "Alt Shift s".
+
+    Attributes:
+        enabled: Master switch for all keybinds below.
+        new_agent_pane: Split-or-tab a new agent pane (`hive pane new`).
+        new_agent_tab: Open a new agents tab (`hive tab agents`).
+        floating_shell: Floating shell in the current worktree (`hive wt exec --here`).
+        control_plane: Toggle the floating control-plane board (`hive status --toggle`).
+    """
+
+    enabled: bool = True
+    new_agent_pane: str | None = "Alt a"
+    new_agent_tab: str | None = "Alt Shift a"
+    floating_shell: str | None = "Alt Shift s"
+    control_plane: str | None = "Alt m"
+
+
 class ZellijConfig(HiveBaseSettings):
     """Configuration for Zellij terminal multiplexer.
 
@@ -178,6 +199,9 @@ class ZellijConfig(HiveBaseSettings):
         agents_per_tab: Agent panes in the rendered "agent" layout's tab (1 or 2).
         control_plane: Where the `hive status --watch --compact` pane sits in
             the rendered "agent" layout's tab: "right", "bottom", or "none".
+        keybinds: Hotkeys shipped inside the rendered session file.
+        floating_shell_command: Command the floating-shell hotkey runs;
+            None uses `$SHELL`.
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_ZELLIJ_")
@@ -186,6 +210,8 @@ class ZellijConfig(HiveBaseSettings):
     session_name: str = "{repo}"
     agents_per_tab: int = 2
     control_plane: str = "right"
+    keybinds: Annotated[KeybindsConfig, Field(default_factory=KeybindsConfig)]
+    floating_shell_command: str | None = None
     pane_labels: list[str] = [
         "Anton",
         "Bohdan",

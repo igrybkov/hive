@@ -1,0 +1,64 @@
+"""Maps the four on-demand actions to the `KeybindSpec` the mux renderer needs.
+
+Each enabled action becomes one binding: a Zellij key, the `hive` argv `Run`
+should launch, and the Run-block options (`close_on_exit`, `floating`,
+`name`, `width`, `height`) `mux/zellij/keybinds.py` turns into body lines. A
+key set to `None` disables just that binding; `cfg.enabled = False` disables
+all of them (`KeybindSpec()`, which renders no `keybinds` block at all).
+"""
+
+from __future__ import annotations
+
+import shlex
+from dataclasses import dataclass
+
+from ..config.schema import KeybindsConfig
+from .model import KeybindSpec
+
+ACTIONS: tuple[str, ...] = (
+    "new_agent_pane",
+    "new_agent_tab",
+    "floating_shell",
+    "control_plane",
+)
+
+
+@dataclass(frozen=True)
+class Keybind:
+    action: str  # new_agent_pane | new_agent_tab | floating_shell | control_plane
+    key: str  # zellij syntax: "Alt a", "Alt Shift s"
+
+
+def _binding(
+    action: str, *, hive: str, shell: str
+) -> tuple[tuple[str, ...], dict[str, str | bool]]:
+    if action == "new_agent_pane":
+        return (hive, "pane", "new"), {"close_on_exit": True}
+    if action == "new_agent_tab":
+        return (hive, "tab", "agents"), {"close_on_exit": True}
+    if action == "floating_shell":
+        argv = (hive, "wt", "exec", "--here", "--", *shlex.split(shell))
+        return argv, {"floating": True, "name": "shell", "close_on_exit": True}
+    if action == "control_plane":
+        return (hive, "status", "--toggle"), {
+            "floating": True,
+            "name": "hive",
+            "close_on_exit": True,
+            "width": "80%",
+            "height": "80%",
+        }
+    raise ValueError(f"unknown keybind action: {action}")
+
+
+def keybind_spec(cfg: KeybindsConfig, *, hive: str, shell: str) -> KeybindSpec:
+    """Enabled actions with a configured key, in `ACTIONS` order; empty if disabled."""
+    if not cfg.enabled:
+        return KeybindSpec()
+    bindings = []
+    for action in ACTIONS:
+        key = getattr(cfg, action)
+        if not key:
+            continue
+        argv, opts = _binding(action, hive=hive, shell=shell)
+        bindings.append((key, argv, opts))
+    return KeybindSpec(bindings=tuple(bindings))

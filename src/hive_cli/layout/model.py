@@ -30,8 +30,14 @@ class TabSpec:
 
 
 @dataclass(frozen=True)
-class KeybindSpec:  # filled in F3; F2 renders an empty block
-    bindings: tuple[tuple[str, tuple[str, ...], dict[str, str]], ...] = ()
+class KeybindSpec:
+    """One binding per (key, Run argv, Run-block options); empty = no block.
+
+    Option values are bool (rendered bare: ``close_on_exit true``) or str
+    (rendered quoted: ``name "shell"``).
+    """
+
+    bindings: tuple[tuple[str, tuple[str, ...], dict[str, str | bool]], ...] = ()
 
 
 @dataclass(frozen=True)

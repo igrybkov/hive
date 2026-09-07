@@ -10,12 +10,14 @@ documented deviation, not an oversight.
 
 from __future__ import annotations
 
+import os
 import shlex
 from collections.abc import Callable
 
 from ..config.schema import PaneConfig, TabConfig
 from ..config.settings import HiveSettings
 from ..core.errors import HiveError
+from .keybinds import keybind_spec
 from .model import PaneSpec, SessionSpec, TabSpec
 
 _TEAM_CMD = (
@@ -237,7 +239,7 @@ def resolve_tab(name: str, *, hive: str, user_tabs: dict[str, TabConfig]) -> Tab
 
 
 def session_spec(*, name: str, hive: str, settings: HiveSettings) -> SessionSpec:
-    """One tab: the configured agent panes plus a status column."""
+    """One tab: the configured agent panes plus a status column, plus keybinds."""
     tab = agents_tab(
         n=settings.zellij.agents_per_tab,
         control=settings.zellij.control_plane,
@@ -245,4 +247,6 @@ def session_spec(*, name: str, hive: str, settings: HiveSettings) -> SessionSpec
         labels=settings.zellij.pane_labels,
         focus=True,
     )
-    return SessionSpec(name=name, tabs=(tab,))
+    shell = settings.zellij.floating_shell_command or os.environ.get("SHELL", "/bin/sh")
+    keybinds = keybind_spec(settings.zellij.keybinds, hive=hive, shell=shell)
+    return SessionSpec(name=name, tabs=(tab,), keybinds=keybinds)
