@@ -5,8 +5,8 @@ the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
 redesign (issue #1), not only what A0 built. Package-map entries tagged
 `[F3]`/`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those later
-features. Everything untagged is either already in the tree (built by A0, F0
-or F1) or is a pre-A0 module the refactor left in place.
+features. Everything untagged is either already in the tree (built by A0,
+F0, F1, or F2) or is a pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -238,7 +238,7 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0/F0/F1 status and divergences from this doc
+## A0/F0/F1/F2 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
 and moved the codebase into it. F0 (done 2026-09-06) added the pane state
@@ -250,10 +250,20 @@ layer and the multiplexer protocol: `state/protocol.py`, `state/server.py`,
 `GitSummary`/`parse_porcelain_v2`/`git_summary`, `services/facts.py`,
 `services/merge.py`, `services/restart.py`, the picker's refiners
 (`ui/pickers/fuzzy.py`, `worktree_items.py`, `worktrees.py`), `ui/board.py`
-and the `--watch` boards, plus `worktrees.fetch_interval`. Still missing are
-the `[F2]`/`[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces
-`core/models.py`, `layout/model.py`, `layout/tabs.py`, `layout/keybinds.py`,
-`services/watch.py`. `services/registry.py` exists as an unwired stub
+and the `--watch` boards, plus `worktrees.fetch_interval`. F2 (done
+2026-09-06) added the backend-neutral layout model and its Zellij renderer:
+`layout/model.py` (`PaneSpec`/`TabSpec`/`KeybindSpec`/`SessionSpec`),
+`layout/tabs.py` (`agents_tab`, the bundled tool tabs, `resolve_tab`,
+`session_spec`), `mux/zellij/kdl.py` (render to KDL, golden-tested),
+`layout/resolve.py`'s "agent" render-on-every-start behavior,
+`ZellijMux.new_tab`, and the `agents_per_tab`/`control_plane`/`tabs:`
+config. `zellij.layout: "agent"` now renders a one-tab session instead of
+pointing at the old static 16-pane file, which moved to `agent-16.kdl`
+(`zellij.layout: "agent-16"` reproduces the old session exactly). Still
+missing are the `[F3]`/`[F4]`/`[F5]`/`[F6]` entries and the untagged pieces
+`core/models.py`, `layout/keybinds.py`, `services/watch.py` (see the F2
+divergences below for why the latter two didn't materialize as separate
+files in F2). `services/registry.py` exists as an unwired stub
 (`registry._MODULES = ()`, so `load_all()` is currently a no-op) — a later
 feature finishes hooking it up.
 
@@ -342,3 +352,35 @@ consistent with the "services are UI-free" rule. `commands/wt.py` passes
 with `info` styling instead of `warn` on that one path. No test asserts the
 exact text; flagged here rather than adding a second callback for a
 cosmetic-only edge path.
+
+F2 divergences from the package map and the F2 spec, all deliberate:
+
+- **`layout/resolve.py` does not import `mux/zellij/kdl.py`.** The F2 spec
+  has it call the renderer directly, but `layout/` and `mux/` are both
+  layer 2 and the guard's sideways allow-list only permits `mux -> layout`
+  (model), never the reverse. `resolve_layout()` takes the renderer as a
+  `render` parameter instead; `services/session.py` (layer 3, free to
+  import both) supplies `mux/zellij/kdl.render_session_file` via its
+  `resolve_layout_path()` helper, which `attach_argv()` and
+  `commands/zellij.py:layout_path()` both call.
+- **No `layout/keybinds.py`.** F2's `KeybindSpec` is an empty-by-default
+  dataclass in `layout/model.py`, same as `PaneSpec`/`TabSpec`; F3's actual
+  keybind rendering is expected to land as `mux/zellij/kdl.py`'s
+  `_render_keybinds` (already stubbed there, rendering nothing today) rather
+  than a separate `layout/keybinds.py` module — there's no keybind-specific
+  logic yet that would justify its own file.
+- **`default_tab_template`'s plugin locations have no `zellij:` prefix**
+  (`plugin location="tab-bar"`, not `"zellij:tab-bar"`), matching the real
+  pre-F2 `agent.kdl` (now `agent-16.kdl`) rather than the F2 spec's
+  illustrative golden block, per the spec's own instruction to prefer the
+  real file when the two differ.
+- **The six bundled tool tabs (`teams`, `shell`, `workflow`, `git`, `tests`,
+  `nvim`) are flattened to one top-level split.** `TabSpec` has exactly one
+  `direction` for its whole pane list; the pre-F2 file nested splits two
+  levels deep (`shell`, `workflow`) and used a Zellij `stacked=true`
+  container (`teams`). Names, commands, args, cwd and sizes are unchanged;
+  only the containing split structure is simpler now.
+- **`hive zellij layout-path --rendered` is a documented no-op today.** The
+  default already fully resolves (and, for `"agent"`, renders) every value;
+  the flag exists for discoverability/forward-compatibility rather than
+  changing behavior.

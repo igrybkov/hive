@@ -100,16 +100,35 @@ HIVE_AGENT=gemini hive zellij             # Use Gemini via env var
 - `--restart`: Auto-restart Zellij after it exits
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 
+#### Session layout
+
+The default `zellij.layout: "agent"` renders **one tab**: `zellij.agents_per_tab`
+(1 or 2) agent panes running `hive run --restart`, side by side, plus a
+`hive status --watch --compact` column controlled by `zellij.control_plane`
+(`right`, `bottom`, or `none`). It re-renders on every `hive zellij` start —
+there's no static file to edit. Further agent tabs and tool tabs are opened
+on demand (see `layout/tabs.py:BUNDLED` for the bundled tool tabs — `teams`,
+`shell`, `workflow`, `git`, `tests`, `nvim`); add your own or override a
+bundled one with `tabs:` in config (see below).
+
+The old 16-pane hand-maintained session is still available:
+
+```yaml
+zellij:
+  layout: "agent-16"
+```
+
 #### `hive zellij layout-path`
 
 Print the resolved path (or name) for a Zellij layout — useful for running
-`zellij --layout <path>` by hand, since the bundled `agent` layout doesn't
-exist as a file under `~/.config/zellij/layouts/` (it ships inside the
-package).
+`zellij --layout <path>` by hand. `agent` renders and writes its session
+file on every call (there's nothing to look at until you do); `agent-16`
+and other bundled/path/passthrough values are static, as before.
 
 ```bash
-hive zellij layout-path              # resolve the configured layout
-hive zellij layout-path agent        # resolve the bundled "agent" layout
+hive zellij layout-path              # render+resolve the configured layout
+hive zellij layout-path agent        # render+resolve the "agent" layout
+hive zellij layout-path agent-16     # the old 16-pane session file
 zellij --layout (hive zellij layout-path)   # fish
 ```
 
@@ -468,13 +487,28 @@ Each item can be:
 #### `zellij.layout`
 
 - **Type:** `string` (optional)
-- **Default:** `"agent"` (the multi-agent layout bundled with this package)
-- **Description:** Layout to use with `hive zellij`. Accepts three forms: the
-  name of a layout bundled with this package (currently just `agent`), the
-  name of a layout in Zellij's own layout dir (`~/.config/zellij/layouts/`),
-  or an explicit path / anything ending in `.kdl` (`~` is expanded). Set to
-  `null` to use Zellij's built-in default layout. Run
-  `hive zellij layout-path [name]` to see what a value resolves to.
+- **Default:** `"agent"` (renders the one-tab layout described in [Session
+  layout](#session-layout))
+- **Description:** Layout to use with `hive zellij`. Accepts: `"agent"`
+  (rendered fresh on every start), `"agent-16"` (the old hand-maintained
+  16-pane session, a static bundled file), the name of a layout in Zellij's
+  own layout dir (`~/.config/zellij/layouts/`), or an explicit path /
+  anything ending in `.kdl` (`~` is expanded). Set to `null` to use Zellij's
+  built-in default layout. Run `hive zellij layout-path [name]` to see what
+  a value resolves to.
+
+#### `zellij.agents_per_tab`
+
+- **Type:** `integer` (`1` or `2`)
+- **Default:** `2`
+- **Description:** Agent panes in the `"agent"` layout's tab.
+
+#### `zellij.control_plane`
+
+- **Type:** `string` (`"right"`, `"bottom"`, or `"none"`)
+- **Default:** `"right"`
+- **Description:** Where the `hive status --watch --compact` column sits in
+  the `"agent"` layout's tab (or whether it's omitted).
 
 #### `zellij.session_name`
 
@@ -485,12 +519,33 @@ Each item can be:
 #### `zellij.pane_labels`
 
 - **Type:** `list[string]`
-- **Default:** the sixteen names used by the bundled layout's `c1: Anton` … `c16: Petro` panes
+- **Default:** the sixteen names used by the `agent-16` layout's `c1: Anton` … `c16: Petro` panes
 - **Description:** Labels for agent panes, in pane-number order. Inside a
   Zellij session, a `hive run` started outside the layout (a pane you opened
   by hand) picks the first pane number no other `hive run` in the session
   holds and takes its label from this list, so its title reads like the
   layout's own panes. Env: `HIVE_ZELLIJ_PANE_LABELS` (comma-separated).
+
+#### `tabs`
+
+- **Type:** `dict[string, TabConfig]`
+- **Default:** `{}`
+- **Description:** User-defined tool tabs, opened the same way as the
+  bundled ones (`teams`, `shell`, `workflow`, `git`, `tests`, `nvim`). A key
+  matching a bundled name overrides it; any other key adds a new tab.
+  ```yaml
+  tabs:
+    docs:
+      panes:
+        - name: docs
+          command: "less README.md"
+        - name: shell
+          suspended: true
+  ```
+  Each pane: `name` (required), `command` (a string, split with `shlex`, or
+  a list of argv strings; omitted/empty makes a plain shell pane), `cwd`,
+  `size` (`"30%"` or a cell count), `suspended` (start suspended, Enter to
+  launch).
 
 #### `github.fetch_issues`
 
