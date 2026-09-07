@@ -22,10 +22,12 @@ from pathlib import Path
 from typing import Any
 
 from ...config import get_runtime_settings
-from ...core import proc
+from ...core import paths, proc
+from ...layout.model import TabSpec
 from ...state import client
 from ...state.pane_state import PaneState, title_for
 from ..base import PaneInfo, TabInfo
+from .kdl import render_tab_file
 
 
 def _pane_id(raw: str) -> str:
@@ -196,8 +198,29 @@ class ZellijMux:
             return None
         return _pane_id(result.stdout) or None
 
-    def new_tab(self, spec: Any, *, focus: bool = True) -> str | None:
-        raise NotImplementedError("F2")
+    def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:
+        """Write render_tab_file(spec) and `new-tab --layout` it into being.
+
+        Returns the tab id Zellij prints on stdout, or None on failure.
+        """
+        session = self.own_session() or "hive"
+        path = paths.layouts_dir() / session / f"tab-{spec.name}.kdl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_tab_file(spec))
+        opts = [] if focus else ["--no-focus"]
+        argv = [
+            "zellij",
+            "action",
+            "new-tab",
+            "--layout",
+            str(path),
+            "--name",
+            spec.name,
+        ]
+        result = _run([*argv, *opts])
+        if result is None:
+            return None
+        return result.stdout.strip() or None
 
     def popup(
         self,

@@ -18,10 +18,12 @@ from pathlib import Path
 import pytest
 
 from hive_cli.core.errors import HiveError
+from hive_cli.layout.tabs import tool_tab
 from hive_cli.mux import get_mux
 from hive_cli.mux.base import PaneInfo, TabInfo
 from hive_cli.mux.zellij import backend
 from hive_cli.mux.zellij.backend import ZellijMux, _pane_id
+from hive_cli.mux.zellij.kdl import render_tab_file
 from hive_cli.state.pane_state import PaneState
 from hive_cli.state.server import PaneStateServer
 
@@ -140,9 +142,41 @@ class TestZellijMuxActions:
         assert mux.focus_pane("3") is None
         assert mux.close_pane("3") is None
 
-    def test_new_tab_is_f2(self):
-        with pytest.raises(NotImplementedError):
-            ZellijMux().new_tab(object())
+
+class TestZellijMuxNewTab:
+    def test_new_tab_writes_file_and_calls_new_tab(
+        self, fake_proc, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("ZELLIJ_SESSION_NAME", "s")
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        fake_proc.script(["zellij", "action", "new-tab"], stdout="3\n")
+        tab = tool_tab("git", hive="/opt/hive")
+
+        result = ZellijMux().new_tab(tab)
+
+        assert result == "3"
+        expected_path = tmp_path / "hive" / "layouts" / "s" / "tab-git.kdl"
+        assert expected_path.is_file()
+        assert expected_path.read_text() == render_tab_file(tab)
+        assert fake_proc.calls[-1] == [
+            "zellij",
+            "action",
+            "new-tab",
+            "--layout",
+            str(expected_path),
+            "--name",
+            "git",
+        ]
+
+    def test_new_tab_no_focus_flag(self, fake_proc, monkeypatch, tmp_path):
+        monkeypatch.setenv("ZELLIJ_SESSION_NAME", "s")
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        fake_proc.script(["zellij", "action", "new-tab"], stdout="4\n")
+        tab = tool_tab("nvim", hive="/opt/hive")
+
+        ZellijMux().new_tab(tab, focus=False)
+
+        assert fake_proc.calls[-1][-1] == "--no-focus"
 
 
 class TestZellijMuxNewPane:

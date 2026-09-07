@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
+
+from ..layout.model import TabSpec
 
 
 @dataclass(frozen=True)
@@ -65,8 +67,8 @@ class Mux(Protocol):
         tab; focus=False: leave focus where it is; suspended: start-suspended.
         """
 
-    def new_tab(self, spec: Any, *, focus: bool = True) -> str | None:
-        """spec is a layout.model.TabSpec (F2)."""
+    def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:
+        """Create a tab from spec; returns its id."""
 
     def popup(
         self,

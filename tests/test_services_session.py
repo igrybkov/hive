@@ -1,4 +1,5 @@
-"""Tests for hive_cli.services.session: stale pane-socket cleanup on start."""
+"""Tests for hive_cli.services.session: stale pane-socket cleanup on start,
+and attach_argv()'s layout resolution (F2: renders "agent" per session)."""
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ from unittest.mock import patch
 
 from fakes import FakeMux
 
+from hive_cli.config.schema import ZellijConfig
+from hive_cli.config.settings import HiveSettings
 from hive_cli.core import paths
 from hive_cli.services import session
 
@@ -97,3 +100,35 @@ def test_restart_loop_sleeps_after_fast_exits():
 
     assert run.call_count == 2
     assert slept == [1] and stops == [1]
+
+
+def _settings() -> HiveSettings:
+    return HiveSettings(zellij=ZellijConfig())
+
+
+class TestAttachArgv:
+    def test_start_renders_and_attaches(self):
+        mux = FakeMux(session="s")
+        cmd = session.attach_argv(
+            "agent", "s", mux=mux, hive="/opt/hive", settings=_settings()
+        )
+        rendered = paths.layouts_dir() / "s" / "session.kdl"
+        assert rendered.is_file()
+        assert rendered.read_text().startswith("layout {")
+        assert cmd == ["fake-attach", "s", str(rendered)]
+
+    def test_start_legacy_layout(self):
+        mux = FakeMux(session="s")
+        cmd = session.attach_argv(
+            "agent-16", "s", mux=mux, hive="/opt/hive", settings=_settings()
+        )
+        assert cmd[0] == "fake-attach"
+        assert cmd[1] == "s"
+        assert cmd[2].endswith("bundled/agent-16.kdl")
+
+    def test_resolve_layout_path_none(self):
+        mux = FakeMux(session="s")
+        cmd = session.attach_argv(
+            None, "s", mux=mux, hive="/opt/hive", settings=_settings()
+        )
+        assert cmd == ["fake-attach", "s", ""]
