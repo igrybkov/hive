@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import sys
 from pathlib import Path
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -58,3 +60,18 @@ def control_sock(session: str) -> Path:
 
 def layouts_dir() -> Path:
     return xdg_state_home() / "hive" / "layouts"
+
+
+def hive_executable() -> str:
+    """Absolute path to this `hive` invocation, for rendering into layouts.
+
+    A pane spawned by Zellij has no shell to resolve $PATH the way the
+    process that launched `hive zellij` did, so the rendered command needs
+    an absolute path. `sys.argv[0]` is normally the installed entry point;
+    falls back to `shutil.which("hive")` (e.g. some test runners rewrite
+    argv[0] to a non-existent path), and finally the bare name.
+    """
+    candidate = Path(sys.argv[0]).resolve()
+    if candidate.is_file():
+        return str(candidate)
+    return shutil.which("hive") or "hive"

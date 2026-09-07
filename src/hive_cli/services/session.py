@@ -16,9 +16,11 @@ import subprocess
 import time
 from collections.abc import Callable
 
+from ..config.settings import HiveSettings
 from ..core import paths
 from ..layout.resolve import resolve_layout
 from ..mux.base import Mux
+from ..mux.zellij.kdl import render_session_file
 from .restart import RestartFloor
 
 
@@ -30,18 +32,41 @@ def session_name(template: str, *, repo: str, agent: str) -> str:
     return template.format(repo=repo, agent=agent)
 
 
-def attach_argv(layout: str | None, full_session_name: str) -> list[str]:
+def resolve_layout_path(
+    layout: str | None, *, session: str, hive: str, settings: HiveSettings
+) -> str | None:
+    """`layout.resolve.resolve_layout` with the zellij KDL renderer wired in.
+
+    The only caller-visible entry point for layout resolution: hides that
+    "agent" needs a renderer at all (layout/resolve.py can't import it —
+    see its module docstring).
+    """
+    return resolve_layout(
+        layout,
+        session=session,
+        hive=hive,
+        settings=settings,
+        render=render_session_file,
+    )
+
+
+def attach_argv(
+    layout: str | None,
+    full_session_name: str,
+    *,
+    mux: Mux,
+    hive: str,
+    settings: HiveSettings,
+) -> list[str]:
     """Build the `zellij [--layout ...] attach --create <session>` argv.
 
-    Adds --layout if configured (bundled name -> packaged path, path/`.kdl`
-    -> expanded, otherwise passed through for zellij to resolve itself).
+    Resolves the layout (rendering and writing session.kdl for "agent"),
+    then defers the actual argv shape to the mux backend.
     """
-    cmd = ["zellij"]
-    resolved_layout = resolve_layout(layout)
-    if resolved_layout:
-        cmd.extend(["--layout", resolved_layout])
-    cmd.extend(["attach", "--create", full_session_name])
-    return cmd
+    resolved = resolve_layout_path(
+        layout, session=full_session_name, hive=hive, settings=settings
+    )
+    return mux.attach_argv(full_session_name, resolved)
 
 
 def clean_stale_sock_dir(mux: Mux | None, session: str) -> None:

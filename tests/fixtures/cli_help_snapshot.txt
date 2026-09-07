@@ -87,11 +87,15 @@ Usage: hive zellij layout-path [ARGS]
 
 Print the resolved path (or name) for a Zellij layout.                                              
 
-Useful for running zellij --layout <path> by hand, since the bundled "agent" layout no longer exists
-as a file under ~/.config/zellij/layouts/ — it ships inside the hive package.
+Useful for running zellij --layout <path> by hand. The bundled "agent" layout renders on every call 
+(session.kdl under hive doctor's state dir); "agent-16" and other bundled/path/passthrough values   
+are static, as before.
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
-│ NAME --name  Layout name to resolve. Defaults to the configured layout.                          │
+│ NAME --name                        Layout name to resolve. Defaults to the configured layout.    │
+│ RENDERED --rendered --no-rendered  Explicit request for the rendered 'agent' session file (the   │
+│                                    default already renders it; kept for discoverability).        │
+│                                    [default: False]                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive wt --help ===
 Usage: hive wt COMMAND

@@ -11,8 +11,8 @@ from rich.console import Console
 
 from ..agents import detect_agent
 from ..config import KNOWN_AGENTS, get_runtime_settings, get_settings
+from ..core.paths import hive_executable
 from ..git.repo import change_to_main_repo, get_session_name
-from ..layout.resolve import resolve_layout
 from ..mux import get_mux
 from ..mux.zellij.backend import set_pane_custom_title, set_pane_status
 from ..services import session
@@ -94,7 +94,14 @@ def zellij(
     full_session_name = session.session_name(
         config.zellij.session_name, repo=repo_name, agent=detected.name
     )
-    cmd = session.attach_argv(config.zellij.layout, full_session_name)
+    mux = get_mux("zellij")
+    cmd = session.attach_argv(
+        config.zellij.layout,
+        full_session_name,
+        mux=mux,
+        hive=hive_executable(),
+        settings=config,
+    )
     child_env = rt.build_child_env()
 
     def on_restart() -> None:
@@ -108,7 +115,7 @@ def zellij(
         cmd,
         child_env,
         session=full_session_name,
-        mux=get_mux("zellij"),
+        mux=mux,
         restart=restart,
         restart_delay=restart_delay,
         on_restart=on_restart,
@@ -154,20 +161,41 @@ def layout_path(
         str | None,
         Parameter(help="Layout name to resolve. Defaults to the configured layout."),
     ] = None,
+    rendered: Annotated[
+        bool,
+        Parameter(
+            name="--rendered",
+            help="Explicit request for the rendered 'agent' session file "
+            "(the default already renders it; kept for discoverability).",
+        ),
+    ] = False,
 ):
     """Print the resolved path (or name) for a Zellij layout.
 
-    Useful for running `zellij --layout <path>` by hand, since the bundled
-    "agent" layout no longer exists as a file under
-    ~/.config/zellij/layouts/ — it ships inside the hive package.
+    Useful for running `zellij --layout <path>` by hand. The bundled
+    "agent" layout renders on every call (session.kdl under
+    `hive doctor`'s state dir); "agent-16" and other bundled/path/passthrough
+    values are static, as before.
 
     Examples:
         hive zellij layout-path              # resolve the configured layout
-        hive zellij layout-path agent        # resolve the bundled "agent" layout
+        hive zellij layout-path agent        # render+resolve the "agent" layout
+        hive zellij layout-path agent-16     # the old 16-pane session file
         zellij --layout (hive zellij layout-path)
     """
-    value = name if name is not None else get_settings().zellij.layout
-    resolved = resolve_layout(value)
+    del rendered  # documented no-op: resolution below already renders "agent"
+    config = get_settings()
+    value = name if name is not None else config.zellij.layout
+    change_to_main_repo()
+    detected = detect_agent()
+    full_session_name = session.session_name(
+        config.zellij.session_name,
+        repo=get_session_name(),
+        agent=detected.name if detected else "",
+    )
+    resolved = session.resolve_layout_path(
+        value, session=full_session_name, hive=hive_executable(), settings=config
+    )
     if resolved is None:
         stderr_console.print("[dim]No layout configured[/dim]")
         sys.exit(1)

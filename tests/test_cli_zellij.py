@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from conftest import CycloptsTestRunner
@@ -74,7 +75,9 @@ class TestZellijCommand:
             # Default layout "agent" resolves to the bundled packaged .kdl path
             assert "--layout" in cmd_list
             layout_arg = cmd_list[cmd_list.index("--layout") + 1]
-            assert layout_arg.endswith("bundled/agent.kdl")
+            # Default layout "agent" now renders a session file per session
+            assert layout_arg.endswith("test-repo/session.kdl")
+            assert Path(layout_arg).is_file()
             assert "attach" in cmd_list
             assert "--create" in cmd_list
             # Default session name is the repo name (no agent suffix)
@@ -204,15 +207,24 @@ class TestLayoutPathCommand:
     def test_layout_path_default_resolves_bundled_agent(
         self, cli_runner: CycloptsTestRunner
     ):
-        """With no argument, resolves the configured (default "agent") layout."""
+        """No argument: resolves+renders the configured (default "agent") layout."""
         result = cli_runner.invoke(app, ["zellij", "layout-path"])
         assert result.exit_code == 0
-        assert result.output.strip().endswith("bundled/agent.kdl")
+        resolved = result.output.strip()
+        assert resolved.endswith("session.kdl")
+        assert Path(resolved).read_text().startswith("layout {")
 
     def test_layout_path_explicit_name(self, cli_runner: CycloptsTestRunner):
         result = cli_runner.invoke(app, ["zellij", "layout-path", "agent"])
         assert result.exit_code == 0
-        assert result.output.strip().endswith("bundled/agent.kdl")
+        assert result.output.strip().endswith("session.kdl")
+
+    def test_layout_path_agent_16_resolves_bundled_file(
+        self, cli_runner: CycloptsTestRunner
+    ):
+        result = cli_runner.invoke(app, ["zellij", "layout-path", "agent-16"])
+        assert result.exit_code == 0
+        assert result.output.strip().endswith("bundled/agent-16.kdl")
 
     def test_layout_path_unknown_name_passed_through(
         self, cli_runner: CycloptsTestRunner
