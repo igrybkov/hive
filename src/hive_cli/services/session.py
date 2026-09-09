@@ -297,6 +297,21 @@ def toggle_control_plane(*, mux: Mux | None = None, session: str | None = None) 
     return True
 
 
+@registry.op("session.restart_pane")
+def restart_pane(
+    pane_id: str, *, session: str | None = None, mux: Mux | None = None
+) -> bool:
+    """Ask the pane's `hive run` to restart; True when it acknowledged.
+
+    `session` is resolved from `mux.own_session()` only when not given, so a
+    caller that already knows its session (the control plane, F4) never
+    needs a multiplexer just to restart a pane.
+    """
+    if session is None:
+        session = _mux(mux).own_session() or ""
+    return client.request(paths.pane_sock(session, pane_id), "restart")
+
+
 def hold(
     argv: list[str],
     *,

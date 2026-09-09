@@ -1,0 +1,12 @@
+Screen {
+    background: $surface;
+}
+
+#filter {
+    display: none;
+    dock: top;
+}
+
+DataTable {
+    height: 1fr;
+}

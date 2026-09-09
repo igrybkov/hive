@@ -19,7 +19,15 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-dependencies = [ "cyclopts>=4.22", "prompt-toolkit>=3", "pydantic>=2", "pydantic-settings>=2", "pyyaml>=6", "rich>=13" ]
+dependencies = [
+ "cyclopts>=4.22",
+ "prompt-toolkit>=3",
+ "pydantic>=2",
+ "pydantic-settings>=2",
+ "pyyaml>=6",
+ "rich>=13",
+ "textual>=8",
+]
 
 [project.scripts]
 hive = "hive_cli.app:app"
@@ -53,6 +61,7 @@ include = [
   "src/hive_cli/**/*.py",
   "src/hive_cli/**/*.yml",
   "src/hive_cli/**/*.kdl",
+  "src/hive_cli/**/*.tcss",
 ]
 
 [tool.ruff]
