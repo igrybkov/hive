@@ -36,6 +36,7 @@ dev = [
   # or CI's `ruff format --check` drifts from what the hook considers clean.
   "ruff~=0.16.0",
   "pre-commit>=4",
+  "pytest-asyncio>=0.24",
 ]
 
 [tool.hatch.version]
@@ -63,6 +64,7 @@ lint.select = [ "E", "F", "I", "UP" ]
 testpaths = [ "tests" ]
 pythonpath = [ "src" ]
 timeout = 20
+asyncio_mode = "auto"
 
 [tool.semantic_release]
 commit_parser = "conventional"
