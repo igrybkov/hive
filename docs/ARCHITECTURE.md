@@ -4,9 +4,9 @@ This is the architecture reference `CLAUDE.md` points to. It is copied from
 the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
 redesign (issue #1), not only what A0 built. Package-map entries tagged
-`[F4]`/`[F5]`/`[F6]` don't exist yet — they land with those later features.
+`[F5]`/`[F6]` don't exist yet — they land with those later features.
 Everything untagged is either already in the tree (built by A0, F0, F1, F2,
-or F3) or is a pre-A0 module the refactor left in place.
+F3, or F4) or is a pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -64,12 +64,12 @@ hive_cli/
   services/ worktrees.py provision/remove (git + files + post_create + handoff symlink)
             pane.py      run_loop(pick, launch, restart): state server + agent child lifecycle
             restart.py   RestartFloor: backoff after fast exits (shared by run/zellij --restart)
-            session.py   start(), open_tab(), new_agent_pane(), floating_shell(), toggle_control_plane(), resolve_here()
-            status.py    collect_status() (1 + 2N spawns via git_summary), AgentStatus, shared-notes summary
-            facts.py     git facts refresher: fetch_if_stale, summaries, issues; + control-socket service [F4]
+            session.py   start(), open_tab(), new_agent_pane(), floating_shell(), toggle_control_plane(), restart_pane(), resolve_here()
+            status.py    collect_status() (1 + 2N spawns via git_summary), AgentStatus, shared-notes summary; compute_facts()/tasks_for_states() feed the control plane
+            facts.py     git facts refresher: fetch_if_stale, summaries, issues; ControlServer (control socket) + summaries_via_control()
             merge.py     collect_overlap(), resolve_target(), preview() for merge-preview
             doctor.py    environment() and timings() (phase | ms | spawns) for `hive doctor`
-            watch.py     watch_session() → AsyncIterator[SessionEvent]                               [F4]
+            watch.py     watch_session() → AsyncIterator[SessionEvent]
             tasks.py handoffs.py editors.py
             registry.py  OPS: name → service callable (the surface exposed over the control socket and to external UIs)
             aio.py       call(fn, *args) = asyncio.to_thread + trace; the one adapter UIs use
@@ -79,7 +79,7 @@ hive_cli/
            pickers/      fuzzy.py (engine + refiners), worktrees.py, worktree_items.py, agents.py, profiles.py, editors.py, workdir.py, status.py
            flows/        interactive multi-step flows (create/delete worktree, new branch, issue branch) — call services
            views/        Rich renderables: status.py, merge.py, tasks.py (tables, boards, detail panels)
-           tui/          Textual control plane: app.py, screens/, widgets/, model.py (build_rows)  [F4]
+           tui/          Textual control plane: app.py (ControlPlaneApp), screens.py, model.py (build_rows), control_plane.tcss
   commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py doctor.py
             pane.py tab.py
             session.py                                                                             [F6]
@@ -97,7 +97,7 @@ exists once, as a function in `services/`. It is reachable three ways:
    never import each other; they share services.
 2. **Over a socket** — `state/protocol.py` defines the ops. Pane sockets carry
    the per-pane ops (`get`, `set`, `subscribe`, `restart`, `stop`, `ping`);
-   the control socket (F4) carries `{"op":"call","name":"session.open_tab",
+   the control socket carries `{"op":"call","name":"session.open_tab",
    "args":{…}}` which dispatches through `services/registry.OPS` — so a Rust
    plugin, a script, or another terminal drives hive with the same functions
    and no `hive` process.
@@ -239,7 +239,7 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0/F0/F1/F2 status and divergences from this doc
+## A0/F0/F1/F2/F3/F4 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
 and moved the codebase into it. F0 (done 2026-09-06) added the pane state
@@ -272,9 +272,26 @@ registered in `services/registry.OPS` (`registry._MODULES` now loads
 `"session"`, so `load_all()` is no longer a no-op); `commands/pane.py` and
 `commands/tab.py` are the CLI surface over them, and `hive wt exec` gained
 `--here`/a trailing positional argv and `hive status` gained `--toggle`.
-Still missing are the `[F4]`/`[F5]`/`[F6]` entries and `core/models.py`
-(see the F2 divergences below for why it didn't materialize as a separate
-file).
+F4 (done 2026-09-09) built the control plane the F3 keybind/toggle work
+anticipated: `state/server.py:JsonLineServer` (extracted from
+`PaneStateServer`, F0's tests unchanged), `services/facts.py:ControlServer`
+(the control socket: `ping`/`get`/`facts`/`call`, the last dispatching
+through `registry.OPS`) and `summaries_via_control()`, `services/watch.py`
+(`watch_session()`, one `_follow` task per pane socket plus a mux-poll and
+a facts-refresh loop, all funneled through one queue), and
+`ui/tui/app.py:ControlPlaneApp` + `ui/tui/screens.py` + `ui/tui/model.py`
+(`build_rows`/`filter_rows`/`age_bucket`/`git_cell`/`status_cell`, pure and
+textual-free). `hive status` on a TTY inside a multiplexer now runs
+`ControlPlaneApp` (also for `--watch`/`--compact`, kept for the bundled
+layout's control-plane pane command) instead of the old Rich watch loop,
+which is why `commands/status.py:watch_status()` and
+`ui/views/status.py:build_watch_view()` are gone — `ui/board.py:watch()`
+itself stays (`merge-preview`/`task` still use it). `toggle_control_plane()`
+now actually dedupes, resolving the F3 divergence noted below.
+`services/session.py` gained `restart_pane()`, also registered in
+`registry.OPS`, so the control plane never touches a pane socket directly.
+Still missing are the `[F5]`/`[F6]` entries and `core/models.py` (see the
+F2 divergences below for why it didn't materialize as a separate file).
 
 F1 divergences from the package map and the F1 spec, all deliberate:
 
@@ -420,17 +437,72 @@ F3 divergences from the F3 spec, all deliberate:
   `hold` command passes real callables from `ui.console.prompt`/a local
   `input()`-wrapping function; every test that exercises the default path
   supplies its own `exec_`, and no test lets the real default run).
-- **`toggle_control_plane()` is real but always returns `False` today.**
-  Nothing before F4 serves `paths.control_sock(session)` — F1's `hive status
-  --watch` doesn't bind a socket there, and F4 is the phase that adds a
-  `ControlServer` for it (see `F4-control-plane.md`). `commands/status.py
-  --toggle` is fully wired (`session.toggle_control_plane()` then falls back
-  to the compact watch board), so the Alt+m keybind works end-to-end, but the
-  F3 spec's own "Alt+m twice focuses the existing control plane" manual
-  check can't hold until F4 lands; it isn't a bug in this branch.
+- **`toggle_control_plane()` was real but always returned `False` in F3.**
+  Nothing before F4 served `paths.control_sock(session)` — F1's `hive status
+  --watch` didn't bind a socket there. **Resolved by F4**: `ControlServer`
+  now serves it for the lifetime of a running control plane, so a second
+  `Alt+m` finds and focuses the first instead of starting another — see the
+  F4 divergences below for what actually starts it.
 - **`hive pane shell`'s non-floating case never calls
   `session.floating_shell`.** That service function always pops up
   (`mux.popup`); the command resolves the target worktree itself (reusing
   `session.resolve_here` for `--here`) and calls `mux.new_pane` directly for
   a split pane, matching the F3 spec's own parenthetical
   ("non-floating: `mux.new_pane([$SHELL], cwd=…)`").
+
+F4 divergences from the F4 spec, all deliberate:
+
+- **`ui/tui/` has no `screens/` or `widgets/` subpackage.** `screens.py`
+  (`ConfirmScreen`/`HelpScreen`/`TabPickerScreen`/`DetailScreen`, each with
+  its own small `DEFAULT_CSS`) is one file; nothing yet needs a custom
+  `Widget` beyond textual's own `DataTable`/`Input`/`ListView`, so there is
+  no `widgets/` package to hold one.
+- **`DataTable.add_columns()` is called with `(label, key)` pairs, not bare
+  labels.** Bare labels get an auto-generated `ColumnKey` that only equals
+  itself (never its label text), so a later `update_cell(row_key, "status",
+  …)` by name would raise; naming the keys explicitly keeps that call
+  readable. `ControlPlaneApp._col_keys` holds the returned keys in column
+  order.
+- **`enter` is wired through `on_data_table_row_selected`, not the
+  `("enter", "focus_pane", …)` binding alone.** `DataTable` binds `enter ->
+  select_cursor` itself and posts `RowSelected` first; a plain (non-priority)
+  app-level binding for the same key never fires while the table has focus.
+  `action_focus_pane` stays reachable (e.g. focus elsewhere) but the message
+  handler is what `enter` actually triggers in practice. Relatedly, the
+  filter `Input` defaults to holding focus on mount even though it is
+  `display: none` — and a focused `Input` eats every letter key as text — so
+  `on_mount` explicitly focuses the table instead.
+- **`PaneRow` does not carry the "now" used for its status age bucket.**
+  `build_rows(..., now=...)` takes the parameter (matching the spec
+  signature) but never reads it — `status_cell(row, now=...)` is computed at
+  paint time instead, from `ControlPlaneApp._now`, which a 30 s timer
+  (`_rebucket`) bumps before repainting. Baking "now" into `PaneRow` would
+  make two otherwise-identical builds compare unequal, defeating the
+  `always_update=False` reactive's whole point.
+- **`services/session.py` gained `restart_pane(pane_id, session=, mux=)`**,
+  not in the spec's interface list. `ui/tui` may not touch a pane socket
+  directly (only `services/watch.py` may touch sockets/the mux from under
+  `ui/`), so `action_restart_pane` needed a services-layer wrapper around
+  `client.request(pane_sock, "restart")`; `commands/pane.py`'s own `restart`
+  command still calls `client.request` inline; the two are not unified.
+- **`--interval` now feeds `watch_session`'s pane/tab poll cadence
+  (`poll_s`, floored at 2 s), not a git-refresh interval.** The control
+  plane's facts refresh runs on its own fixed 30 s cadence
+  (`watch_session`'s `facts_s` default, which `ControlPlaneApp` never
+  overrides); nothing currently exposes that one as a flag.
+- **`tasks_for_states` maps a pane to its task file by `state.branch`
+  alone**, which is only an approximation of `collect_status`'s "1" for the
+  main worktree, branch name otherwise: a `PaneState` carries no `is_main`
+  flag, so a pane whose branch happens to be the repo's default branch
+  shows no task rather than agent 1's. A pane still `selecting` (no branch
+  yet) is skipped outright rather than guessed at.
+- **`test_idle_writes_nothing` spies on `ControlPlaneApp._paint`, not the
+  driver's `write`.** `App.run_test()` uses `HeadlessDriver`, which never
+  writes to a terminal at all, so patching `write` would prove nothing; the
+  test proves the real invariant — no repaint without a change — with a
+  positive control (a genuine `PaneStateChanged` does trigger one).
+- **`commands/status.py:watch_status()` and
+  `ui/views/status.py:build_watch_view()` are deleted**, not
+  `ui/board.py:watch()` (the spec's own wording, "ui/views/status.py:watch()
+  is deleted," names the wrong module — `board.watch()` is the generic loop
+  `merge-preview` and `task` still depend on).

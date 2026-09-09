@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
-from hive_cli.services.status import _get_task, collect_status, get_shared_notes_summary
+from hive_cli.services.status import (
+    _get_task,
+    collect_status,
+    compute_facts,
+    get_shared_notes_summary,
+    tasks_for_states,
+)
+from hive_cli.state.pane_state import PaneState
 
 
 class TestGetTask:
@@ -107,3 +116,57 @@ class TestCollectStatusSpawnBudget:
         fake_proc.script(("git", "status"), stdout="# branch.head (detached)\n")
         statuses = collect_status(tmp_path)
         assert statuses[0].branch == "main"
+
+
+class TestComputeFacts:
+    """The control plane's (F4) facts refresher: exercised nowhere else, since
+    test_cli_status.py patches ControlPlaneApp.run so its _pump never starts.
+    """
+
+    def _repo_with_fetch_head(self, tmp_path, *, age_s: float = 0.0) -> Path:
+        main = tmp_path / "repo"
+        (main / ".git").mkdir(parents=True)
+        fetch_head = main / ".git" / "FETCH_HEAD"
+        fetch_head.write_text("")
+        if age_s:
+            old = time.time() - age_s
+            os.utime(fetch_head, (old, old))
+        return main
+
+    def test_fetches_when_stale_and_keys_are_str_paths(self, fake_proc, tmp_path):
+        main = self._repo_with_fetch_head(tmp_path, age_s=10_000)
+        fake_proc.script(
+            ("git", "worktree", "list"), stdout=WORKTREE_LIST.format(main=main)
+        )
+
+        facts = compute_facts(main)
+
+        assert fake_proc.count("git", "fetch") == 1
+        assert set(facts) == {str(main), f"{main}-feat-a", f"{main}-feat-b"}
+        assert all(isinstance(k, str) for k in facts)
+
+    def test_no_fetch_when_fresh(self, fake_proc, tmp_path):
+        main = self._repo_with_fetch_head(tmp_path)
+        fake_proc.script(
+            ("git", "worktree", "list"), stdout=WORKTREE_LIST.format(main=main)
+        )
+
+        compute_facts(main)
+
+        assert fake_proc.count("git", "fetch") == 0
+
+
+class TestTasksForStates:
+    def test_skips_selecting_and_unknown_pane_id(self, temp_git_repo: Path):
+        tasks_dir = temp_git_repo / ".claude" / "local-agents" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (tasks_dir / "agent-feat.md").write_text("do the thing\n")
+        states = [
+            PaneState(hive_pane_id=1, branch="feat"),
+            PaneState(hive_pane_id=2, branch=""),  # still selecting: no worktree yet
+            PaneState(hive_pane_id=0, branch="feat"),  # unknown hive_pane_id
+        ]
+
+        tasks = tasks_for_states(temp_git_repo, states)
+
+        assert tasks == {"1": "do the thing"}

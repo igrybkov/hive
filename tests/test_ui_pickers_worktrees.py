@@ -19,7 +19,10 @@ from unittest.mock import patch
 from conftest import git
 
 from hive_cli.config.runtime import RuntimeSettings
+from hive_cli.core import paths
+from hive_cli.git import GitSummary
 from hive_cli.git.github import GitHubIssue
+from hive_cli.services.facts import ControlServer
 from hive_cli.ui.console import info
 from hive_cli.ui.pickers.worktree_items import ACTION_ISSUE_PREFIX, first_paint
 from hive_cli.ui.pickers.worktrees import (
@@ -194,6 +197,54 @@ class TestRefineGit:
         assert by_value["feat-a"].meta == "← current (dirty)"
         assert by_value["feat-b"].meta == "" and by_value["feat-b"].style == "green"
         assert by_value["plain"].style == "dim"
+
+
+class TestRefineGitViaControlSocket:
+    def test_uses_control_socket_and_skips_git_entirely(
+        self, fake_proc, tmp_path, short_tmp, mocker
+    ):
+        main = tmp_path / "repo"
+        fake_proc.script(
+            ("git", "worktree", "list"),
+            stdout=f"worktree {main}\nHEAD 1111111111111111111111111111111111111111\n"
+            "branch refs/heads/main\n\n",
+        )
+        sections, _items, _selection = first_paint(main)
+
+        summary = GitSummary(
+            branch="main",
+            upstream="",
+            ahead=0,
+            behind=0,
+            staged=0,
+            modified=0,
+            untracked=0,
+            conflicted=0,
+            last_hash="",
+            last_subject="",
+            last_age="",
+        )
+        server = ControlServer(
+            paths.control_sock("picker-test"),
+            pane_id="1",
+            facts=lambda: {str(main): summary},
+        )
+        server.start()
+        fake_mux = mocker.Mock()
+        fake_mux.own_session.return_value = "picker-test"
+        mocker.patch("hive_cli.ui.pickers.worktrees.get_mux", return_value=fake_mux)
+        try:
+            items = refine_git(main, sections, threading.Event())
+        finally:
+            server.close()
+
+        # No fetch, no per-worktree `git status`/`git log` -- those came from
+        # the control socket instead. `get_all_branches` still runs; listing
+        # branches is a picker concern the control plane doesn't answer for.
+        assert fake_proc.count("git", "fetch") == 0
+        assert fake_proc.count("git", "status") == 0
+        by_value = {i.value: i for i in items}
+        assert by_value["main"].style != "red"  # a real summary was applied
 
 
 class TestRefineIssues:

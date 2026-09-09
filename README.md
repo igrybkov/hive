@@ -241,24 +241,67 @@ Neither `hive pane` nor `hive tab` blocks: they only ask the multiplexer to
 create the pane/tab and exit — the same `close_on_exit true` shape as the
 hotkeys' own `Run` blocks.
 
-### Live boards: `--watch`
+### Control plane: `hive status`
 
-`hive status`, `hive merge-preview` and `hive task` take `--watch` (and
-`--interval SECONDS`, default 5). The board runs on the alternate screen and
-is repainted only when its content changes, so an idle pane writes nothing
-and the multiplexer has nothing to re-render. Keys: `q` quits, `r` refreshes
-now; in `hive status --watch`, Enter opens the interactive worktree picker
-and returns to the board afterwards.
+On a TTY inside a multiplexer, `hive status` is the session control plane —
+a Textual app with one row per agent pane, pushed live over the pane
+sockets, a cheap list-panes/list-tabs poll for pane/tab discovery, and
+keys to focus/create/close/restart panes and open tabs. It is the one
+place `hive` now fetches on a timer unprompted: every 30s it runs
+`git fetch origin` (only when the pane's `FETCH_HEAD` is stale) plus
+`git status`/`log` for every worktree, to refresh the git-status column —
+look for it in `HIVE_TRACE=1` output if you're auditing spawns. It also
+serves a control socket (`control.sock` in the session's runtime dir) that
+pickers use to read the same git facts instead of fetching their own (so
+the picker's periodic fetch is skipped whenever a control plane is up),
+and that `hive status --toggle` (the `Alt m` hotkey) uses to find and
+focus a running instance instead of starting a second one.
 
 ```bash
-hive status --watch --compact         # the bundled layout's status pane
+hive status                # the control plane (TTY + multiplexer); falls
+                            # back to the one-shot table otherwise
+hive status --toggle       # Alt+m's target: focus the running control
+                            # plane, or start one (this pane becomes it)
+hive status --plain        # one-shot Rich table, for scripts/pipes
+hive status --plain -c     # ...single-line-per-agent
+hive status -i             # one-shot interactive picker, outputs a path
+```
+
+| Key      | Action                                          |
+| -------- | ------------------------------------------------ |
+| `Enter`  | Focus the selected pane                          |
+| `n`      | New agent pane (same as `hive pane new`)         |
+| `t`      | New agents tab (same as `hive tab agents`)       |
+| `T`      | Open a tool tab (pick from bundled/user tabs)    |
+| `f`      | Floating shell in the selected pane's worktree   |
+| `x`      | Close the selected pane (confirms first)         |
+| `r`      | Restart the agent in the selected pane           |
+| `d`      | Git status + recent commits for the selected pane|
+| `/`      | Filter rows (branch/agent/label/task substring)  |
+| `g`      | Refresh git facts now                            |
+| `?`      | Help                                             |
+| `q`      | Quit                                             |
+
+The control socket speaks the same one-JSON-object-per-line protocol as a
+pane socket (see [Pane state sockets](#pane-state-sockets)); besides
+`ping`/`get`, it answers `facts` (the same git summaries the TUI shows) and
+`call` (dispatches any operation `hive`'s control plane registers, by name):
+
+```bash
+printf '{"op":"facts"}\n' | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
+printf '{"op":"call","name":"session.open_tab","args":{"name":"git"}}\n' \
+  | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
+```
+
+`hive merge-preview` and `hive task` still use the older live-board pattern
+(`--watch`, `--interval SECONDS`; alternate screen, repainted only on
+change, `q` quits, `r` refreshes now) — that model predates the control
+plane and stays for these two single-purpose views:
+
+```bash
 hive merge-preview --watch            # file overlap between agents, live
 hive merge-preview 2 -w --interval 30 # simulated merge for agent 2 every 30 s
 hive task --watch                     # every agent's task file
-hive status --toggle                  # the Alt+m hotkey's target: a floating
-                                       # control-plane board, focusing an
-                                       # existing one instead of opening a
-                                       # second (once F4's control socket exists)
 ```
 
 ### `hive doctor`

@@ -25,6 +25,7 @@ from ...config import (
     get_runtime_settings,
     get_settings,
 )
+from ...core.errors import HiveError
 from ...git import (
     get_all_branches,
     get_current_worktree_branch,
@@ -33,6 +34,7 @@ from ...git import (
     get_worktree_path,
     is_worktree_dirty,
 )
+from ...mux import get_mux
 from ...services import editors, facts
 from ..console import error, info, warn
 from ..flows import worktrees as flows
@@ -69,14 +71,32 @@ __all__ = [
 ]
 
 
+def _control_session() -> str | None:
+    """The running mux's session name, or None (no mux, or an unsupported
+    backend -- get_mux() raises HiveError under TMUX until F6)."""
+    try:
+        mux = get_mux()
+    except HiveError:
+        return None
+    return mux.own_session() if mux is not None else None
+
+
 def refine_git(
     main_repo: Path, sections: PickerItems, cancel: threading.Event
 ) -> list[FuzzyItem] | None:
-    """Fetch (throttled), summarise every worktree, list branches; recompose."""
-    facts.fetch_if_stale(main_repo, get_settings().worktrees.fetch_interval)
-    if cancel.is_set():
-        return None
-    sections.summaries = facts.summaries(sections.worktrees, cancel=cancel)
+    """Summaries from a running control plane (F4) if one answers -- no fetch,
+    no per-worktree spawns; otherwise fetch (throttled) and summarise directly.
+    Either way, list branches and recompose.
+    """
+    session = _control_session()
+    via_control = facts.summaries_via_control(session) if session else None
+    if via_control is None:
+        facts.fetch_if_stale(main_repo, get_settings().worktrees.fetch_interval)
+        if cancel.is_set():
+            return None
+        sections.summaries = facts.summaries(sections.worktrees, cancel=cancel)
+    else:
+        sections.summaries = via_control
     if cancel.is_set():
         return None
     sections.branches = get_all_branches(main_repo)
