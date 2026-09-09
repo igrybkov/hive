@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 from hive_cli.agents.profiles import (
     create_profile,
+    ensure_gemini_hooks,
     get_profiles_root,
     list_profiles,
     resolve_profile_env,
 )
 from hive_cli.config import reset_settings
+from hive_cli.hooks.templates import gemini_settings
 
 # ---------------------------------------------------------------------------
 # get_profiles_root
@@ -220,3 +223,145 @@ class TestListProfiles:
         with patch("hive_cli.config.loader.find_config_files", return_value=[]):
             result = list_profiles("claude")
         assert result == ["work"]
+
+
+# ---------------------------------------------------------------------------
+# ensure_gemini_hooks
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureGeminiHooks:
+    """Tests for ensure_gemini_hooks() -- the .gemini/settings.json merge."""
+
+    def test_creates_the_file(self, tmp_path):
+        changed = ensure_gemini_hooks(tmp_path, "/x/hive-hook")
+        assert changed is True
+        settings_path = tmp_path / ".gemini" / "settings.json"
+        assert settings_path.exists()
+        data = json.loads(settings_path.read_text())
+        assert data["hooks"] == gemini_settings("/x/hive-hook")["hooks"]
+
+    def test_merges_into_existing_keeping_other_key_and_hook(self, tmp_path):
+        settings_path = tmp_path / ".gemini" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "theme": "dark",
+                    "hooks": {
+                        "BeforeAgent": [
+                            {"hooks": [{"type": "command", "command": "other"}]}
+                        ]
+                    },
+                }
+            )
+        )
+
+        changed = ensure_gemini_hooks(tmp_path, "/x/hive-hook")
+
+        assert changed is True
+        data = json.loads(settings_path.read_text())
+        assert data["theme"] == "dark"
+        before_agent = data["hooks"]["BeforeAgent"]
+        assert {"hooks": [{"type": "command", "command": "other"}]} in before_agent
+        assert {
+            "hooks": [{"type": "command", "command": "/x/hive-hook gemini"}]
+        } in before_agent
+        # Events not previously present are still added.
+        assert "SessionStart" in data["hooks"]
+
+    def test_second_call_returns_false_and_file_byte_identical(self, tmp_path):
+        ensure_gemini_hooks(tmp_path, "/x/hive-hook")
+        settings_path = tmp_path / ".gemini" / "settings.json"
+        before = settings_path.read_bytes()
+
+        changed = ensure_gemini_hooks(tmp_path, "/x/hive-hook")
+
+        assert changed is False
+        assert settings_path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# resolve_profile_env + hooks
+# ---------------------------------------------------------------------------
+
+
+class TestResolveProfileEnvHooks:
+    """Tests for the hooks.enabled + mode == 'profile' path in resolve_profile_env."""
+
+    def setup_method(self):
+        reset_settings()
+
+    def teardown_method(self):
+        reset_settings()
+
+    def test_hooks_disabled_no_gemini_settings_written(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            resolve_profile_env("gemini", "work")
+        settings_path = (
+            tmp_path
+            / "hive"
+            / "profiles"
+            / "gemini"
+            / "work"
+            / ".gemini"
+            / "settings.json"
+        )
+        assert not settings_path.exists()
+
+    def test_hooks_enabled_gemini_profile_merges_settings(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("HIVE_HOOKS_ENABLED", "true")
+        with (
+            patch("hive_cli.config.loader.find_config_files", return_value=[]),
+            patch(
+                "hive_cli.agents.profiles.launch.hive_hook_path",
+                return_value="/x/hive-hook",
+            ),
+        ):
+            resolve_profile_env("gemini", "work")
+        settings_path = (
+            tmp_path
+            / "hive"
+            / "profiles"
+            / "gemini"
+            / "work"
+            / ".gemini"
+            / "settings.json"
+        )
+        assert settings_path.exists()
+        data = json.loads(settings_path.read_text())
+        assert data["hooks"] == gemini_settings("/x/hive-hook")["hooks"]
+
+    def test_hooks_enabled_but_cli_mode_agent_does_not_merge_gemini_settings(
+        self, monkeypatch, tmp_path
+    ):
+        """claude's hooks.mode is 'cli' -- no gemini settings merge for it."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("HIVE_HOOKS_ENABLED", "true")
+        with (
+            patch("hive_cli.config.loader.find_config_files", return_value=[]),
+            patch("hive_cli.agents.profiles.ensure_gemini_hooks") as mock_ensure,
+        ):
+            resolve_profile_env("claude", "work")
+        mock_ensure.assert_not_called()
+
+    def test_hooks_enabled_writes_only_under_profile_dir(self, monkeypatch, tmp_path):
+        """No files land under the real HOME even with hooks enabled."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.setenv("HIVE_HOOKS_ENABLED", "true")
+        with (
+            patch("hive_cli.config.loader.find_config_files", return_value=[]),
+            patch(
+                "hive_cli.agents.profiles.launch.hive_hook_path",
+                return_value="/x/hive-hook",
+            ),
+        ):
+            resolve_profile_env("gemini", "work")
+        assert not (fake_home / ".gemini").exists()
+        assert not (fake_home / ".claude").exists()
+        assert not (fake_home / ".codex").exists()

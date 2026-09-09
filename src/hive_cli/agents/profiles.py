@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from ..config import get_agent_config
+from ..config import get_agent_config, get_settings
 from ..core import paths
+from ..hooks import templates
+from . import launch
 
 
 def get_profiles_root() -> Path:
@@ -60,9 +63,48 @@ def resolve_profile_env(agent_name: str, profile_name: str | None) -> dict[str, 
             if not target.exists():
                 target.write_text(contents)
 
+    if get_settings().hooks.enabled and cfg.hooks.mode == "profile":
+        ensure_gemini_hooks(profile_dir, launch.hive_hook_path())
+
     env: dict[str, str] = {cfg.profile.config_dir_env: str(profile_dir)}
     env.update(cfg.profile.extra_env)
     return env
+
+
+def ensure_gemini_hooks(profile_dir: Path, hive_hook: str) -> bool:
+    """Merge `templates.gemini_settings(hive_hook)` into the profile's
+    `.gemini/settings.json`.
+
+    Existing top-level keys and existing hook entries for other commands are
+    kept; hive's own entry is added once per event (idempotent -- a second
+    call with the same `hive_hook` leaves the file byte-identical). Never
+    touches the user's real `~/.gemini/settings.json`: `profile_dir` is
+    always a hive-managed profile directory.
+
+    Returns:
+        True if the file was created or changed.
+    """
+    settings_path = profile_dir / ".gemini" / "settings.json"
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except ValueError:
+            existing = {}
+
+    hooks_obj = existing.setdefault("hooks", {})
+    changed = not settings_path.exists()
+    for event, entries in templates.gemini_settings(hive_hook)["hooks"].items():
+        event_hooks = hooks_obj.setdefault(event, [])
+        hive_entry = entries[0]
+        if hive_entry not in event_hooks:
+            event_hooks.append(hive_entry)
+            changed = True
+
+    if changed:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    return changed
 
 
 def _seed_profile_dir(profile_dir: Path, seed_files: dict[str, str]) -> None:
