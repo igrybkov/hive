@@ -118,21 +118,6 @@ def build_compact_output(statuses: list[AgentStatus], main_repo: Path) -> Group:
     return Group(*lines)
 
 
-def build_watch_view(
-    statuses: list[AgentStatus], main_repo: Path, compact: bool
-) -> Group:
-    """One `hive status --watch` frame: the board plus the key hint, no clock."""
-    if compact:
-        body = build_compact_output(statuses, main_repo)
-    else:
-        body = build_full_output(statuses, main_repo)
-    hint = Text.from_markup(
-        "[dim]Press [bold]Enter[/bold] to select worktree, "
-        "[bold]r[/bold] to refresh, [bold]q[/bold] to quit[/dim]"
-    )
-    return Group(body, Text(""), hint)
-
-
 # --- detail screen content (pure builders, one per section) ---
 
 

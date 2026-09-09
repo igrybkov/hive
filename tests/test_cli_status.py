@@ -2,32 +2,35 @@
 
 Drives the real CLI end to end. See test_git_status.py, test_services_status.py,
 test_ui_views_status.py, and test_ui_pickers_status.py for the unit-level tests
-of the modules this command composes.
+of the modules this command composes; test_tui_app.py covers the control-plane
+TUI itself.
 """
 
 from __future__ import annotations
 
-import io
+import threading
 from pathlib import Path
 
 from conftest import CycloptsTestRunner, commit_file, git
-from rich.console import Console
 
 from hive_cli.app import app
+from hive_cli.core import paths
+from hive_cli.state import client
 
 
-def render(renderable) -> str:
-    buf = io.StringIO()
-    Console(file=buf, width=100).print(renderable)
-    return buf.getvalue()
+def _run_inside_zellij(monkeypatch, mocker, session: str) -> None:
+    """Simulate a TTY inside a Zellij session, so `status` reaches the TUI path."""
+    monkeypatch.setenv("ZELLIJ", "0")
+    monkeypatch.setenv("ZELLIJ_SESSION_NAME", session)
+    mocker.patch("hive_cli.commands.status.is_interactive", return_value=True)
 
 
 class TestStatusCliOneShot:
     def test_no_worktrees_full_and_compact(
         self, cli_runner: CycloptsTestRunner, temp_git_repo
     ):
-        full = cli_runner.invoke(app, ["status"])
-        compact = cli_runner.invoke(app, ["status", "--compact"])
+        full = cli_runner.invoke(app, ["status", "--plain"])
+        compact = cli_runner.invoke(app, ["status", "--plain", "--compact"])
         assert full.exit_code == 0 and compact.exit_code == 0
         assert "Agent 1 (main)" in full.output
         assert "Agents" in compact.output and "main" in compact.output
@@ -45,7 +48,7 @@ class TestStatusCliOneShot:
         git("branch", "--set-upstream-to=origin/main", "ahead-branch", cwd=ahead_wt)
         commit_file(ahead_wt, "new.txt", "content", message="ahead work")
 
-        result = cli_runner.invoke(app, ["status"])
+        result = cli_runner.invoke(app, ["status", "--plain"])
         assert result.exit_code == 0
         assert "dirty-branch" in result.output
         assert "ahead-branch" in result.output
@@ -60,9 +63,51 @@ class TestStatusCliOneShot:
         (tasks_dir / "agent-1.md").write_text("investigate the bug\n")
         (tasks_dir.parent / "shared-notes.md").write_text("## Decision\nuse X\n")
 
-        result = cli_runner.invoke(app, ["status"])
+        result = cli_runner.invoke(app, ["status", "--plain"])
         assert "investigate the bug" in result.output
         assert "Shared Notes" in result.output and "Decision" in result.output
+
+
+class TestStatusCliNoTuiFallback:
+    def test_bare_status_without_a_multiplexer_is_plain(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo
+    ):
+        """No ZELLIJ/TMUX in the environment (conftest deletes them): the
+        default path falls back to the one-shot table without needing
+        `--plain`, and without importing textual."""
+        result = cli_runner.invoke(app, ["status"])
+        assert result.exit_code == 0
+        assert "Agent 1 (main)" in result.output
+
+    def test_plain_never_imports_textual(self, temp_git_repo):
+        import os
+        import subprocess
+        import sys
+
+        env = {
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        }
+        # cyclopts' App.__call__ exits the process (sys.exit) after dispatch,
+        # so the module check must run in a handler, not after the call.
+        code = (
+            "import sys\n"
+            "from hive_cli.app import app\n"
+            "try:\n"
+            "    app(['status', '--plain'])\n"
+            "except SystemExit:\n"
+            "    pass\n"
+            "print('textual' in sys.modules)\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=temp_git_repo,
+            env=env,
+        ).stdout
+        assert out.strip().splitlines()[-1] == "False"
 
 
 class TestStatusCliInteractiveFlag:
@@ -82,80 +127,107 @@ class TestStatusCliInteractiveFlag:
 
 
 class TestStatusCliToggle:
-    def test_focuses_existing_and_skips_board(
+    def test_focuses_existing_and_skips_running_one(
         self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
     ):
         toggle = mocker.patch(
             "hive_cli.commands.status.session.toggle_control_plane", return_value=True
         )
-        watch = mocker.patch("hive_cli.ui.board.watch")
+        run = mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp.run")
 
         result = cli_runner.invoke(app, ["status", "--toggle"])
 
         assert result.exit_code == 0
         toggle.assert_called_once()
-        watch.assert_not_called()
+        run.assert_not_called()
 
-    def test_opens_compact_board_when_absent(
+    def test_starts_one_when_absent(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker, monkeypatch
+    ):
+        _run_inside_zellij(monkeypatch, mocker, "toggle-test")
+        mocker.patch(
+            "hive_cli.commands.status.session.toggle_control_plane",
+            return_value=False,
+        )
+        run = mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp.run")
+
+        result = cli_runner.invoke(app, ["status", "--toggle", "--interval", "2"])
+
+        assert result.exit_code == 0
+        run.assert_called_once()
+
+    def test_no_multiplexer_falls_back_to_plain(
         self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
     ):
         mocker.patch(
             "hive_cli.commands.status.session.toggle_control_plane",
             return_value=False,
         )
-        watch = mocker.patch("hive_cli.ui.board.watch", return_value=("q", None))
+        run = mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp.run")
 
-        result = cli_runner.invoke(app, ["status", "--toggle", "--interval", "2"])
-
-        assert result.exit_code == 0
-        watch.assert_called_once()
-        assert watch.call_args.kwargs["interval"] == 2
-
-
-class TestStatusCliWatch:
-    def test_q_ends_watch_without_opening_the_picker(
-        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
-    ):
-        watch = mocker.patch("hive_cli.ui.board.watch", return_value=("q", None))
-        picker = mocker.patch("hive_cli.ui.pickers.status.interactive_status")
-
-        result = cli_runner.invoke(app, ["status", "--watch", "--interval", "2"])
+        result = cli_runner.invoke(app, ["status", "--toggle"])
 
         assert result.exit_code == 0
-        assert watch.call_args.kwargs["interval"] == 2
-        assert watch.call_args.kwargs["exit_keys"] == ("\r", "\n")
-        picker.assert_not_called()
+        run.assert_not_called()
+        assert "Agent 1 (main)" in result.output
 
-    def test_enter_opens_picker_then_returns_to_the_board(
-        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
+
+class TestStatusCliRunsTheControlPlane:
+    def test_watch_compact_runs_it(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker, monkeypatch
     ):
-        watch = mocker.patch(
-            "hive_cli.ui.board.watch", side_effect=[("\r", ["S"]), ("q", None)]
-        )
-        picker = mocker.patch("hive_cli.ui.pickers.status.interactive_status")
-
-        result = cli_runner.invoke(app, ["status", "-w", "-c"])
-
-        assert result.exit_code == 0
-        picker.assert_called_once_with(
-            statuses=["S"], main_repo=temp_git_repo.resolve()
-        )
-        assert watch.call_count == 2
-
-    def test_collect_and_render_are_wired_to_the_board(
-        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker
-    ):
-        frames: list[str] = []
-
-        def fake_watch(collect, render_frame, **kwargs):
-            statuses = collect()
-            frames.append(render(render_frame(statuses)))
-            return "q", statuses
-
-        mocker.patch("hive_cli.ui.board.watch", side_effect=fake_watch)
+        """`--watch --compact` is the bundled layout's control-plane pane
+        command, kept accepted but folded into the same TUI path."""
+        _run_inside_zellij(monkeypatch, mocker, "watch-test")
+        run = mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp.run")
 
         result = cli_runner.invoke(app, ["status", "--watch", "--compact"])
 
         assert result.exit_code == 0
-        assert "Agents" in frames[0] and "main" in frames[0]
-        assert "Enter" in frames[0] and "q" in frames[0]
+        run.assert_called_once()
+
+    def test_bare_status_runs_it_and_clamps_interval(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker, monkeypatch
+    ):
+        _run_inside_zellij(monkeypatch, mocker, "bare-test")
+        # Patched where it is defined: commands/status.py imports it lazily
+        # (inside run_control_plane) precisely so --plain never pulls in
+        # textual, so there is no module-level attribute to patch there.
+        app_cls = mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp")
+
+        result = cli_runner.invoke(app, ["status", "--interval", "0.1"])
+
+        assert result.exit_code == 0
+        app_cls.return_value.run.assert_called_once()
+        assert app_cls.call_args.kwargs["poll_s"] == 2.0  # floored, per perf rules
+
+    def test_starts_and_closes_a_control_server(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, mocker, monkeypatch
+    ):
+        _run_inside_zellij(monkeypatch, mocker, "control-server-test")
+        ready = threading.Event()
+        proceed = threading.Event()
+
+        def fake_run(_self) -> None:
+            ready.set()
+            proceed.wait(2.0)
+
+        mocker.patch("hive_cli.ui.tui.app.ControlPlaneApp.run", fake_run)
+        result_box: dict = {}
+
+        def invoke() -> None:
+            result_box["result"] = cli_runner.invoke(app, ["status"])
+
+        thread = threading.Thread(target=invoke)
+        thread.start()
+        try:
+            assert ready.wait(2.0)
+            sock = paths.control_sock("control-server-test")
+            state = client.get_state(sock)
+            assert state is not None and state["kind"] == "control"
+        finally:
+            proceed.set()
+            thread.join(2.0)
+
+        assert result_box["result"].exit_code == 0
+        assert client.get_state(paths.control_sock("control-server-test")) is None

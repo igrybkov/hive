@@ -1,25 +1,30 @@
-"""Status command - display status of all agent worktrees."""
+"""Status command - display status of all agent worktrees, and (F4) run the
+control-plane TUI on a TTY inside a multiplexer.
+"""
 
 from __future__ import annotations
 
+import functools
 import sys
+from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from ..git import get_main_repo
+from ..core import paths
+from ..git import GitSummary, get_main_repo
+from ..mux import get_mux
 from ..services import session
 from ..services import status as service_status
-from ..ui import board
+from ..services.facts import ControlServer
 from ..ui.console import out as console
 from ..ui.pickers import status as status_picker
+from ..ui.tty import is_interactive
 from ..ui.views import status as status_views
-
-ENTER_KEYS = ("\r", "\n")
 
 
 def display_status(compact: bool = False) -> None:
-    """Display agent status board.
+    """Display agent status board (one-shot; never imports textual).
 
     Args:
         compact: If True, use single-line-per-agent format.
@@ -35,22 +40,56 @@ def display_status(compact: bool = False) -> None:
     console.print(output)
 
 
-def watch_status(compact: bool = False, interval: float = 5.0) -> None:
-    """Live board (repainted only when something changed) until `q`.
+class _FactsBox:
+    """Reassigned (never mutated) each facts refresh, so `ControlServer`'s
+    `facts` callable -- called from a socket handler thread -- always reads
+    a consistent, already-computed dict."""
 
-    Enter leaves the board for the interactive picker and returns to it.
+    def __init__(self) -> None:
+        self.value: dict[str, GitSummary] = {}
+
+
+def _refresh_facts(main_repo: Path, box: _FactsBox) -> dict[str, GitSummary]:
+    facts = service_status.compute_facts(main_repo)
+    box.value = facts
+    return facts
+
+
+def run_control_plane(*, compact: bool = False, poll_s: float = 3.0) -> None:
+    """Run the control-plane TUI, or fall back to the one-shot table.
+
+    Order matters: no multiplexer, then not-a-tty, both fall back to the
+    plain table (`compact` applies only there -- the TUI always shows every
+    column). Only a real TTY inside a multiplexer gets the TUI.
     """
+    mux = get_mux()
+    if mux is None or not is_interactive():
+        display_status(compact=compact)
+        return
+
+    # Local import: keeps textual out of `--plain` and `import hive_cli.app`.
+    from ..ui.tui.app import ControlPlaneApp
+
     main_repo = get_main_repo()
-    while True:
-        key, statuses = board.watch(
-            lambda: service_status.collect_status(main_repo),
-            lambda data: status_views.build_watch_view(data, main_repo, compact),
-            interval=interval,
-            exit_keys=ENTER_KEYS,
+    session_name = mux.own_session() or ""
+    box = _FactsBox()
+    server = ControlServer(
+        paths.control_sock(session_name),
+        pane_id=mux.own_pane_id() or "",
+        facts=lambda: box.value,
+    )
+    server.start()
+    try:
+        app = ControlPlaneApp(
+            mux=mux,
+            session=session_name,
+            poll_s=poll_s,
+            facts_fn=functools.partial(_refresh_facts, main_repo, box),
+            tasks_fn=functools.partial(service_status.tasks_for_states, main_repo),
         )
-        if key not in ENTER_KEYS:
-            return
-        status_picker.interactive_status(statuses=statuses, main_repo=main_repo)
+        app.run()
+    finally:
+        server.close()
 
 
 # Cyclopts App
@@ -67,16 +106,14 @@ def status(
         bool,
         Parameter(
             name=["--watch", "-w"],
-            help=(
-                "Watch mode with interactive selection. Press Enter to select worktree."
-            ),
+            help="Kept for old rendered layouts; folded into the default TUI.",
         ),
     ] = False,
     compact: Annotated[
         bool,
         Parameter(
             name=["--compact", "-c"],
-            help="Use single-line-per-agent compact format.",
+            help="Single-line-per-agent format (only the --plain table).",
         ),
     ] = False,
     interactive: Annotated[
@@ -88,35 +125,41 @@ def status(
     ] = False,
     interval: Annotated[
         float,
-        Parameter(name="--interval", help="Seconds between refreshes in watch mode."),
+        Parameter(
+            name="--interval",
+            help="Control-plane pane/tab discovery interval, floored at 2s.",
+        ),
     ] = 5.0,
     toggle: Annotated[
         bool,
         Parameter(
             help=(
-                "Focus the running floating control-plane pane, or open one "
-                "(compact watch mode) if none is running. For the Alt+m hotkey."
+                "Focus the running control plane, or start one (the control "
+                "plane's own pane) if none is running. For the Alt+m hotkey."
             ),
         ),
     ] = False,
+    plain: Annotated[
+        bool,
+        Parameter(help="One-shot Rich table for scripts/pipes; never runs the TUI."),
+    ] = False,
 ):
-    """Display status of all agent worktrees.
+    """Display status of all agent worktrees, or (F4) the control plane.
+
+    On a TTY inside a multiplexer, the default (also `--watch`/`--compact`,
+    kept for old rendered layouts) is the control-plane TUI: one row per
+    agent pane, pushed live, with keys to focus/create/close/restart panes
+    and open tabs (press `?` in it for the full list). Outside a
+    multiplexer, or without a TTY, it falls back to the one-shot table.
 
     Shows branch, commits, dirty status, and tasks for each agent worktree.
 
     Examples:
-        hive status              # Full status view (one-shot)
-        hive status --compact    # Compact format (one-shot)
-        hive status --watch      # Watch mode (press Enter for interactive)
-        hive status -w -c        # Compact watch mode
-        hive status -w --interval 2   # Refresh every 2 seconds
+        hive status              # Control-plane TUI (TTY + multiplexer)
+        hive status --plain      # One-shot full table, for scripts/pipes
+        hive status --plain -c   # One-shot compact table
         hive status -i           # Interactive selection
-        hive status --toggle     # Focus (or open) the floating control plane
-
-    Watch mode keybindings:
-        Enter    Open interactive worktree picker
-        r        Refresh now
-        q        Quit watch mode
+        hive status --toggle     # Focus (or start) the control plane
 
     Interactive picker keybindings:
         Enter    Show detailed worktree info (git status, commits)
@@ -136,10 +179,13 @@ def status(
         Esc      Go back to worktree picker
         q        Quit entirely
     """
-    if toggle:
+    poll_s = max(interval, 2.0)
+    if plain:
+        display_status(compact=compact)
+    elif toggle:
         if session.toggle_control_plane():
             return
-        watch_status(compact=True, interval=interval)
+        run_control_plane(compact=compact, poll_s=poll_s)
     elif interactive and not watch:
         # One-shot interactive mode - outputs path to stdout for shell integration
         path = status_picker.interactive_status()
@@ -147,9 +193,5 @@ def status(
             print(path)
         else:
             sys.exit(1)
-    elif watch:
-        # Live board; Enter opens the interactive picker and comes back
-        watch_status(compact=compact, interval=interval)
     else:
-        # One-shot display
-        display_status(compact=compact)
+        run_control_plane(compact=compact, poll_s=poll_s)

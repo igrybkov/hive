@@ -369,15 +369,19 @@ Usage: hive status [ARGS]
 Display status of all agent worktrees.
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
-│ WATCH --watch -w --no-watch        Watch mode with interactive selection. Press Enter to select  │
-│                                    worktree. [default: False]                                    │
-│ COMPACT --compact -c --no-compact  Use single-line-per-agent compact format. [default: False]    │
+│ WATCH --watch -w --no-watch        Kept for old rendered layouts; folded into the default TUI.   │
+│                                    [default: False]                                              │
+│ COMPACT --compact -c --no-compact  Single-line-per-agent format (only the --plain table).        │
+│                                    [default: False]                                              │
 │ INTERACTIVE --interactive -i       One-shot interactive selection. Outputs path for shell cd.    │
 │   --no-interactive                 [default: False]                                              │
-│ INTERVAL --interval                Seconds between refreshes in watch mode. [default: 5.0]       │
-│ TOGGLE --toggle --no-toggle        Focus the running floating control-plane pane, or open one    │
-│                                    (compact watch mode) if none is running. For the Alt+m        │
-│                                    hotkey. [default: False]                                      │
+│ INTERVAL --interval                Control-plane pane/tab discovery interval, floored at 2s.     │
+│                                    [default: 5.0]                                                │
+│ TOGGLE --toggle --no-toggle        Focus the running control plane, or start one (the control    │
+│                                    plane's own pane) if none is running. For the Alt+m hotkey.   │
+│                                    [default: False]                                              │
+│ PLAIN --plain --no-plain           One-shot Rich table for scripts/pipes; never runs the TUI.    │
+│                                    [default: False]                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive task --help ===
 Usage: hive task COMMAND [ARGS]

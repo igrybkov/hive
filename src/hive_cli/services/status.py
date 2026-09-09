@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..git import git_summary, list_worktrees
+from ..config import get_settings
+from ..git import GitSummary, git_summary, list_worktrees
+from ..state.pane_state import PaneState
+from . import facts as facts_service
 
 
 @dataclass
@@ -91,6 +94,40 @@ def collect_status(main_repo: Path) -> list[AgentStatus]:
             )
         )
     return statuses
+
+
+def task_summary_for(main_repo: Path, agent_id: str) -> str:
+    """Public wrapper around `_get_task`: "" (never None) when there is none."""
+    return _get_task(main_repo, agent_id) or ""
+
+
+def compute_facts(main_repo: Path) -> dict[str, GitSummary]:
+    """Throttled fetch + per-worktree summaries, keyed by worktree path (str).
+
+    The control plane's (F4) facts refresher: `services.facts.fetch_if_stale`
+    then `.summaries`, reshaped from `dict[Path, GitSummary]` to the
+    `dict[str, GitSummary]` `watch.FactsUpdated`/`ControlServer.facts` use.
+    """
+    worktrees = list_worktrees(main_repo)
+    facts_service.fetch_if_stale(main_repo, get_settings().worktrees.fetch_interval)
+    return {
+        str(path): summary
+        for path, summary in facts_service.summaries(worktrees).items()
+    }
+
+
+def tasks_for_states(main_repo: Path, states: list[PaneState]) -> dict[str, str]:
+    """Task summaries keyed by `str(hive_pane_id)`, for the control plane (F4).
+
+    A pane's task file is keyed by its worktree's agent id ("1" for main, the
+    branch name otherwise -- see `collect_status`); a pane still `selecting`
+    (no branch yet) has no worktree, so it gets no task rather than main's.
+    """
+    return {
+        str(state.hive_pane_id): task_summary_for(main_repo, state.branch)
+        for state in states
+        if state.branch and state.hive_pane_id
+    }
 
 
 def get_shared_notes_summary(main_repo: Path) -> tuple[int, str | None]:

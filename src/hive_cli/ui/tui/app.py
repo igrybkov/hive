@@ -100,6 +100,7 @@ class ControlPlaneApp(App):
         facts_fn: Callable[[], dict[str, GitSummary]] | None = None,
         tasks_fn: Callable[[list[PaneState]], dict[str, str]] | None = None,
         session_dir: Path | None = None,
+        poll_s: float = 3.0,
     ) -> None:
         super().__init__()
         self._mux = mux
@@ -109,6 +110,7 @@ class ControlPlaneApp(App):
         self._facts_fn = facts_fn
         self._tasks_fn = tasks_fn
         self._session_dir = session_dir
+        self._poll_s = poll_s
         self._states: dict[str, PaneState] = {}
         self._panes: dict[str, PaneInfo] = {}
         self._tabs: dict[str, TabInfo] = {}
@@ -143,6 +145,7 @@ class ControlPlaneApp(App):
         async for event in self._watch(
             self._mux,
             self._session,
+            poll_s=self._poll_s,
             session_dir=self._session_dir,
             facts_fn=self._facts_fn,
         ):
