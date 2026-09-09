@@ -49,10 +49,12 @@ from .merge import deep_merge
 from .runtime import RuntimeSettings, get_runtime_settings
 from .schema import (
     AgentConfig,
+    AgentHooksConfig,
     AgentProfileConfig,
     AgentsConfig,
     GitHubConfig,
     HiveConfig,
+    HooksConfig,
     KeybindsConfig,
     PaneConfig,
     PostCreateCommand,
@@ -138,10 +140,12 @@ __all__ = [
     "get_runtime_settings",
     # Schema
     "AgentConfig",
+    "AgentHooksConfig",
     "AgentProfileConfig",
     "AgentsConfig",
     "GitHubConfig",
     "HiveConfig",
+    "HooksConfig",
     "KeybindsConfig",
     "PaneConfig",
     "PostCreateCommand",

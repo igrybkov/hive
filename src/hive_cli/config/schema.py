@@ -6,7 +6,7 @@ Pydantic model defaults here are only used as fallbacks during parsing.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import SettingsConfigDict
@@ -37,6 +37,23 @@ class AgentProfileConfig(BaseModel):
     seed_files: Annotated[dict[str, str], Field(default_factory=dict)]
 
 
+class AgentHooksConfig(BaseModel):
+    """How (if at all) an agent's own hook mechanism can be wired to `hive-hook`.
+
+    Attributes:
+        mode: "cli" injects hook config via a CLI flag on every launch
+            (Claude's `--settings`, Codex's `-c notify=...`). "profile" merges
+            hook config into the agent's hive-managed profile directory
+            (Gemini's `.gemini/settings.json`) -- never the user's real config.
+            "unsupported" means hive does not wire hooks for this agent.
+        note: Short caveat shown alongside the mode (e.g. what "cli" replaces,
+            or why the agent is unsupported).
+    """
+
+    mode: Literal["cli", "profile", "unsupported"] = "unsupported"
+    note: str | None = None
+
+
 class AgentConfig(BaseModel):
     """Configuration for a specific AI coding agent.
 
@@ -47,6 +64,7 @@ class AgentConfig(BaseModel):
         extra_dirs_flag: CLI flag the agent uses for additional directories
             (e.g., "--add-dir" for Claude, "--directory" for Cursor).
         profile: Config-dir profile support configuration.
+        hooks: How hive wires this agent's hook mechanism to `hive-hook`.
     """
 
     resume_args: Annotated[list[str], Field(default_factory=list)]
@@ -54,6 +72,7 @@ class AgentConfig(BaseModel):
     extra_args: Annotated[list[str], Field(default_factory=list)]
     extra_dirs_flag: str | None = None
     profile: AgentProfileConfig | None = None
+    hooks: Annotated[AgentHooksConfig, Field(default_factory=AgentHooksConfig)]
 
 
 class AgentsConfig(HiveBaseSettings):
@@ -275,6 +294,19 @@ class TabConfig(BaseModel):
     panes: Annotated[list[PaneConfig], Field(default_factory=list)]
 
 
+class HooksConfig(HiveBaseSettings):
+    """Configuration for agent lifecycle hooks.
+
+    Attributes:
+        enabled: When true, hive injects hook wiring per launch (or into a
+            named profile) so agent lifecycle events reach the pane socket.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="HIVE_HOOKS_")
+
+    enabled: bool = False
+
+
 class GitHubConfig(HiveBaseSettings):
     """Configuration for GitHub integration.
 
@@ -305,6 +337,7 @@ class HiveConfig(BaseModel):
             Relative paths are resolved against the main repo root.
         tabs: User-defined tool tabs, keyed by name (override or add to
             `layout.tabs.BUNDLED`).
+        hooks: Agent lifecycle hooks configuration.
     """
 
     agents: Annotated[AgentsConfig, Field(default_factory=AgentsConfig)]
@@ -314,3 +347,4 @@ class HiveConfig(BaseModel):
     tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
+    hooks: Annotated[HooksConfig, Field(default_factory=HooksConfig)]

@@ -21,6 +21,9 @@ agents:
         # CLAUDE_CONFIG_DIR fully isolates config, credentials, and session history.
         # Source: Anthropic docs (verified).
         config_dir_env: CLAUDE_CONFIG_DIR
+      hooks:
+        # `--settings` merges with ~/.claude/settings.json (verified).
+        mode: cli
 
     copilot:
       resume_args: ["--continue"]
@@ -36,6 +39,9 @@ agents:
         # seed_files:
         #   settings.json: '{"storeTokenPlaintext": true}\n'
         config_dir_env: COPILOT_HOME
+      hooks:
+        mode: unsupported
+        note: "hooks live in the repo's .github/hooks"
 
     codex:
       resume_args: ["resume", "--last"]
@@ -51,6 +57,11 @@ agents:
         seed_files:
           config.toml: |
             cli_auth_credentials_store = "file"
+      hooks:
+        # `-c notify=[...]` (verified against the installed CLI 2026-09-09) replaces
+        # any user-configured notify -- hive does not merge it.
+        mode: cli
+        note: "replaces a user-configured notify"
 
     gemini:
       resume_args: ["--resume", "latest"]
@@ -67,6 +78,10 @@ agents:
         config_dir_env: GEMINI_CLI_HOME
         extra_env:
           GEMINI_FORCE_FILE_STORAGE: "true"
+      hooks:
+        # Merged into the hive-managed profile's .gemini/settings.json (verified
+        # 2026-09-09 against geminicli.com/docs/hooks); never the user's real config.
+        mode: profile
 
     # Cursor agent CLI - no extra dirs support
     agent:
@@ -80,6 +95,9 @@ agents:
         # relocated by CURSOR_CONFIG_DIR. Login isolation requires overriding HOME, which
         # hive does not do. Config+history isolates cleanly; logins will be shared.
         config_dir_env: CURSOR_CONFIG_DIR
+      hooks:
+        mode: unsupported
+        note: "CURSOR_CONFIG_DIR does not relocate hooks.json"
 
     # Cursor agent alternative name - no extra dirs support
     cursor-agent:
@@ -89,8 +107,16 @@ agents:
       profile:
         # Same as 'agent' above. See CURSOR_CONFIG_DIR caveats.
         config_dir_env: CURSOR_CONFIG_DIR
+      hooks:
+        mode: unsupported
 
 resume:
+  enabled: false
+
+# Agent lifecycle hooks: when enabled, hive injects hook wiring (per launch for
+# "cli"-mode agents, into the hive-managed profile for "profile"-mode agents)
+# so tab names and the control plane reflect what the agent is doing.
+hooks:
   enabled: false
 
 worktrees:

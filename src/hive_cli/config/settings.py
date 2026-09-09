@@ -22,6 +22,7 @@ from .merge import deep_merge
 from .schema import (
     AgentsConfig,
     GitHubConfig,
+    HooksConfig,
     ResumeConfig,
     TabConfig,
     WorktreesConfig,
@@ -86,6 +87,7 @@ class HiveSettings(HiveBaseSettings):
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
     tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
+    hooks: Annotated[HooksConfig, Field(default_factory=HooksConfig)]
 
     @classmethod
     def settings_customise_sources(

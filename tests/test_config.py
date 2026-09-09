@@ -10,7 +10,9 @@ from conftest import git
 from hive_cli.config import (
     KNOWN_AGENTS,
     AgentConfig,
+    AgentHooksConfig,
     AgentProfileConfig,
+    HooksConfig,
     deep_merge,
     find_config_files,
     find_global_config,
@@ -452,6 +454,75 @@ class TestAgentConfigProfileField:
         )
         assert cfg.profile is not None
         assert cfg.profile.config_dir_env == "CLAUDE_CONFIG_DIR"
+
+
+class TestAgentHooksConfig:
+    """Tests for the AgentHooksConfig schema model."""
+
+    def test_defaults_to_unsupported(self):
+        cfg = AgentHooksConfig()
+        assert cfg.mode == "unsupported"
+        assert cfg.note is None
+
+    def test_mode_and_note_can_be_set(self):
+        cfg = AgentHooksConfig(mode="cli", note="replaces a user-configured notify")
+        assert cfg.mode == "cli"
+        assert cfg.note == "replaces a user-configured notify"
+
+    def test_agent_config_hooks_defaults_to_unsupported(self):
+        assert AgentConfig().hooks.mode == "unsupported"
+
+    def test_default_config_agent_hook_modes(self, tmp_path, monkeypatch):
+        """Each bundled agent's hooks.mode matches the F5 spec table."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.delenv("HIVE_AGENTS_ORDER", raising=False)
+
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+
+        configs = config.agents.configs
+        assert configs["claude"].hooks.mode == "cli"
+        assert configs["codex"].hooks.mode == "cli"
+        assert configs["gemini"].hooks.mode == "profile"
+        assert configs["copilot"].hooks.mode == "unsupported"
+        assert configs["agent"].hooks.mode == "unsupported"
+        assert configs["cursor-agent"].hooks.mode == "unsupported"
+
+
+class TestHooksConfig:
+    """Tests for the top-level hooks.enabled setting."""
+
+    def test_disabled_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+        assert config.hooks.enabled is False
+
+    def test_enabled_from_config_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("hooks:\n  enabled: true\n")
+
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            config = load_config()
+        assert config.hooks.enabled is True
+
+    def test_hive_hooks_enabled_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HIVE_HOOKS_ENABLED", "true")
+
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+        assert config.hooks.enabled is True
+
+    def test_defaults_standalone(self):
+        assert HooksConfig().enabled is False
 
 
 class TestPostCreateCommands:
