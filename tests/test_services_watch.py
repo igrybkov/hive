@@ -5,11 +5,13 @@ and the facts refresher into one async generator of SessionEvent.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 from fakes import FakeMux
 
 from hive_cli.mux.base import PaneInfo, TabInfo
+from hive_cli.mux.tmux.control import ControlEvent
 from hive_cli.services.watch import (
     FactsUpdated,
     PaneAdded,
@@ -204,3 +206,80 @@ class TestNoFactsFnIsNoop:
         await gen.aclose()
 
         assert not any(isinstance(e, FactsUpdated) for e in events)
+
+
+async def _drain(gen, events: list) -> None:
+    async for ev in gen:
+        events.append(ev)
+
+
+class TestTmuxEventsDriveRefresh:
+    async def _one_event_then_done(self):
+        yield ControlEvent("window-add", ("@1",))
+
+    async def test_debounced_refresh_no_polling(self, mux, short_tmp):
+        mux.name = "tmux"
+        gen = watch_session(
+            mux,
+            "test",
+            poll_s=10,
+            session_dir=short_tmp,
+            events=self._one_event_then_done(),
+        )
+        events: list = []
+        drain = asyncio.create_task(_drain(gen, events))
+        # long enough for the 0.2s debounce (plus the events generator's
+        # own natural end) to run the second refresh; short of poll_s=10,
+        # so a spurious poll-driven call would be caught too.
+        await asyncio.sleep(0.6)
+        drain.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(drain, timeout=1.0)
+
+        assert len(mux.named("list_panes")) == 2
+        assert len(mux.named("list_tabs")) == 2
+        # FakeMux returns the same panes/tabs every call: only the initial
+        # refresh differs from "nothing seen yet", so exactly one TabsChanged.
+        assert sum(isinstance(e, TabsChanged) for e in events) == 1
+
+    async def test_output_events_are_ignored(self, mux, short_tmp):
+        mux.name = "tmux"
+
+        async def noisy_events():
+            for _ in range(5):
+                yield ControlEvent("output", ("%0", "hi"))
+            yield ControlEvent("window-add", ("@1",))
+
+        gen = watch_session(
+            mux, "test", poll_s=10, session_dir=short_tmp, events=noisy_events()
+        )
+        events: list = []
+        drain = asyncio.create_task(_drain(gen, events))
+        await asyncio.sleep(0.6)
+        drain.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(drain, timeout=1.0)
+
+        assert len(mux.named("list_panes")) == 2
+
+    async def test_aclose_cancels_tmux_tasks_too(self, mux, short_tmp):
+        mux.name = "tmux"
+        gen = watch_session(
+            mux,
+            "test",
+            poll_s=10,
+            session_dir=short_tmp,
+            events=self._one_event_then_done(),
+        )
+        await _collect_until(
+            gen, lambda evs: len(mux.named("list_panes")) >= 1, timeout=2.0
+        )
+        await gen.aclose()
+        await asyncio.sleep(0)
+
+        leftover = [
+            t
+            for t in asyncio.all_tasks()
+            if not t.done() and (t.get_name() or "").startswith("hive-watch-")
+        ]
+        assert leftover == []

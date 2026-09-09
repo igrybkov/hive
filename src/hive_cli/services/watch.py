@@ -17,9 +17,12 @@ from pathlib import Path
 from ..core import paths
 from ..git import GitSummary
 from ..mux.base import Mux, PaneInfo, TabInfo
+from ..mux.tmux.control import LAYOUT_EVENTS, ControlEvent, tmux_control_events
 from ..state import client, protocol
 from ..state.pane_state import PaneState
 from . import aio
+
+_DEBOUNCE_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,125 @@ async def _discover(
         await asyncio.sleep(poll_s)
 
 
+async def _start_new_follows(
+    session_dir: Path,
+    queue: asyncio.Queue[SessionEvent],
+    tasks: dict[str, asyncio.Task],
+) -> None:
+    """One pass of `_discover`'s socket-dir scan: start `_follow` for any
+    pane socket not already followed. Never touches the mux."""
+    socks = await aio.call(client.list_pane_sockets, session_dir)
+    for sock in socks:
+        if sock.name not in tasks:
+            tasks[sock.name] = asyncio.create_task(
+                _follow(sock, queue), name=f"hive-watch-follow-{sock.stem}"
+            )
+
+
+async def _scan_sockets_loop(
+    session_dir: Path,
+    poll_s: float,
+    queue: asyncio.Queue[SessionEvent],
+    tasks: dict[str, asyncio.Task],
+) -> None:
+    """tmux: a socket-dir scan on the ordinary poll_s cadence, decoupled
+    from `mux.list_panes`/`list_tabs` (those only run on a debounced
+    control-mode event, per `_discover_events`). A newly split pane's
+    hive-run socket can appear well after the layout-change event that
+    created the pane -- without this, PaneAdded would only ever fire on
+    the next unrelated layout event, if one ever comes. This never spawns
+    tmux, so it doesn't count against "no list-panes polling"."""
+    while True:
+        await _start_new_follows(session_dir, queue, tasks)
+        await asyncio.sleep(poll_s)
+
+
+async def _refresh_tabs(
+    mux: Mux,
+    session_dir: Path,
+    queue: asyncio.Queue[SessionEvent],
+    tasks: dict[str, asyncio.Task],
+    last: tuple[tuple[PaneInfo, ...], tuple[TabInfo, ...]] | None,
+) -> tuple[tuple[PaneInfo, ...], tuple[TabInfo, ...]]:
+    """One `list_panes`/`list_tabs` pass (plus a socket scan): pushes
+    TabsChanged and returns the new snapshot only when it differs."""
+    await _start_new_follows(session_dir, queue, tasks)
+    panes, tabs = await aio.call(mux.list_panes), await aio.call(mux.list_tabs)
+    current = (tuple(panes), tuple(tabs))
+    if current != last:
+        await queue.put(TabsChanged(tuple(tabs), tuple(panes)))
+    return current
+
+
+async def _debounced_refresh_loop(
+    mux: Mux,
+    session_dir: Path,
+    events: AsyncIterator[ControlEvent],
+    queue: asyncio.Queue[SessionEvent],
+    tasks: dict[str, asyncio.Task],
+    last: tuple[tuple[PaneInfo, ...], tuple[TabInfo, ...]],
+) -> None:
+    """Consume control-mode events; on each LAYOUT_EVENTS hit, (re)schedule
+    one refresh after `_DEBOUNCE_S` -- a burst of events (a split creates
+    both a layout-change and a window-add) collapses to a single refresh.
+
+    A pending refresh outlives the loop when `events` ends on its own (only
+    a finite test double does this in practice -- the real control-mode
+    stream never ends short of the session dying); it is cancelled instead
+    when this coroutine itself is cancelled (the real `aclose()` shutdown
+    path), so `watch_session`'s "cancel every task it started" holds.
+    """
+    pending: asyncio.Task | None = None
+
+    async def _refresh_after_debounce() -> None:
+        nonlocal last
+        await asyncio.sleep(_DEBOUNCE_S)
+        last = await _refresh_tabs(mux, session_dir, queue, tasks, last)
+
+    try:
+        async for event in events:
+            if event.kind not in LAYOUT_EVENTS:
+                continue
+            if pending is not None:
+                pending.cancel()
+            pending = asyncio.create_task(
+                _refresh_after_debounce(), name="hive-watch-tmux-debounce"
+            )
+        if pending is not None:
+            await pending
+    except asyncio.CancelledError:
+        if pending is not None:
+            pending.cancel()
+        raise
+    finally:
+        aclose = getattr(events, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+async def _discover_events(
+    mux: Mux,
+    session_dir: Path,
+    events: AsyncIterator[ControlEvent],
+    poll_s: float,
+    queue: asyncio.Queue[SessionEvent],
+    tasks: dict[str, asyncio.Task],
+) -> None:
+    """tmux: no `list_panes`/`list_tabs` polling -- one refresh runs
+    immediately, then only on a debounced control-mode layout event. A
+    parallel, mux-call-free socket scan keeps sockets discovered promptly."""
+    last = await _refresh_tabs(mux, session_dir, queue, tasks, None)
+    scan_task = asyncio.create_task(
+        _scan_sockets_loop(session_dir, poll_s, queue, tasks),
+        name="hive-watch-tmux-scan",
+    )
+    try:
+        await _debounced_refresh_loop(mux, session_dir, events, queue, tasks, last)
+    finally:
+        scan_task.cancel()
+        await asyncio.gather(scan_task, return_exceptions=True)
+
+
 async def _facts_loop(
     facts_fn: Callable[[], dict[str, GitSummary]] | None,
     facts_s: float,
@@ -138,21 +260,35 @@ async def watch_session(
     facts_s: float = 30.0,
     session_dir: Path | None = None,
     facts_fn: Callable[[], dict[str, GitSummary]] | None = None,
+    events: AsyncIterator[ControlEvent] | None = None,
 ) -> AsyncIterator[SessionEvent]:
-    """Multiplexes `_discover` and `_facts_loop` through one queue; both run
+    """Multiplexes discovery and `_facts_loop` through one queue; both run
     immediately, then every poll_s/facts_s. Cancelling the generator
     (aclose) cancels every task it started.
+
+    `mux.name == "tmux"`: discovery is event-driven, not polled (see
+    `_discover_events`) -- `events` defaults to the real
+    `tmux_control_events(session)` and is only ever overridden by tests.
+    Every other backend keeps the original poll loop (`_discover`).
     """
     session_dir = (
         session_dir if session_dir is not None else paths.session_sock_dir(session)
     )
     queue: asyncio.Queue[SessionEvent] = asyncio.Queue()
     tasks: dict[str, asyncio.Task] = {}
+    if mux.name == "tmux":
+        event_source = (
+            events
+            if events is not None
+            else tmux_control_events(session, server=getattr(mux, "server", "hive"))
+        )
+        discover = _discover_events(
+            mux, session_dir, event_source, poll_s, queue, tasks
+        )
+    else:
+        discover = _discover(mux, session_dir, poll_s, queue, tasks)
     runner = [
-        asyncio.create_task(
-            _discover(mux, session_dir, poll_s, queue, tasks),
-            name="hive-watch-discover",
-        ),
+        asyncio.create_task(discover, name="hive-watch-discover"),
         asyncio.create_task(
             _facts_loop(facts_fn, facts_s, queue), name="hive-watch-facts"
         ),
