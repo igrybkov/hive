@@ -8,13 +8,14 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from ..agents import detect_agent
-from ..agents.launch import get_extra_dirs_args
+from ..agents.launch import get_extra_dirs_args, hive_hook_path, hook_args
 from ..config import (
     KNOWN_AGENTS,
     get_agent_config,
     get_runtime_settings,
     get_settings,
 )
+from ..core.errors import HiveError
 from ..git import expand_path, get_main_repo
 from ..services import pane
 from ..ui.console import error, format_yellow
@@ -127,12 +128,16 @@ def _require_detected_agent(agent: str | None):
     sys.exit(1)
 
 
-def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent, ctx):
+def _make_dynamic_agent_runner(
+    agent, args, resume, cli_specified_agent, ctx, hive_hook
+):
     """Build the run_command callable the restart loop invokes.
 
-    Re-detects the agent (and re-reads skip-permissions/extra args/extra dirs)
-    on every call, so it respects HIVE_AGENT/Ctrl+A/Ctrl+S changes made by the
-    interactive picker between restarts.
+    Re-detects the agent (and re-reads skip-permissions/extra args/extra
+    dirs/hook args) on every call, so it respects HIVE_AGENT/Ctrl+A/Ctrl+S
+    changes made by the interactive picker between restarts. `hive_hook` is
+    resolved once up front (see `run()`); only whether/how it applies to the
+    *current* agent needs re-checking each iteration.
     """
 
     def run_with_dynamic_agent(command: list[str]) -> int:
@@ -158,6 +163,9 @@ def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent, ctx):
             agent_extra_args = current_agent_config.extra_args
 
         extra_dir_args = get_extra_dirs_args(current_agent_name, _resolved_extra_dirs())
+        current_hook_args = hook_args(
+            current_agent_name, hive_hook=hive_hook, settings=get_settings()
+        )
 
         return pane.run_with_resume(
             current_cmd,
@@ -166,6 +174,7 @@ def _make_dynamic_agent_runner(agent, args, resume, cli_specified_agent, ctx):
             skip_perm_args,
             agent_extra_args,
             extra_dir_args,
+            current_hook_args,
             args,
             resume,
             ctx=ctx,
@@ -182,6 +191,7 @@ def _compute_use_dynamic_runner(
     has_resume_args,
     has_agent_extra_args,
     has_extra_dirs,
+    has_hook_args,
 ) -> bool:
     """True when the restart loop needs the dynamic re-detecting runner.
 
@@ -194,6 +204,9 @@ def _compute_use_dynamic_runner(
     - skip-permissions is enabled (needs arg injection)
     - extra_args configured (needs arg injection per agent)
     - extra_dirs configured (needs arg injection per agent)
+    - hook_args configured (needs arg injection per agent; the execvp fast
+      path only swaps the binary name on a Ctrl+A agent switch, so a
+      baked-in claude `--settings {...}` would otherwise be handed to codex)
     - profile is active upfront (via --profile flag or HIVE_AGENT_PROFILE env)
     """
     return (
@@ -204,6 +217,7 @@ def _compute_use_dynamic_runner(
         or rt.skip_permissions
         or has_agent_extra_args
         or has_extra_dirs
+        or has_hook_args
         or bool(rt.agent_profile)
     )
 
@@ -355,6 +369,18 @@ def run(
     initial_agent_extra_args = init_agent_config.extra_args if init_agent_config else []
     has_agent_extra_args = bool(initial_agent_extra_args)
 
+    # Resolve hive-hook once up front (HiveError -> a clear CLI error, not a
+    # traceback) and the initial agent's hook args from it.
+    hive_hook = ""
+    if config.hooks.enabled:
+        try:
+            hive_hook = hive_hook_path()
+        except HiveError as exc:
+            error(str(exc))
+            sys.exit(exc.exit_code)
+    initial_hook_args = hook_args(detected.name, hive_hook=hive_hook, settings=config)
+    has_hook_args = bool(initial_hook_args)
+
     use_dynamic_runner = _compute_use_dynamic_runner(
         rt,
         worktree,
@@ -363,6 +389,7 @@ def run(
         has_resume_args,
         has_agent_extra_args,
         has_extra_dirs,
+        has_hook_args,
     )
 
     # Determine auto_select settings: CLI overrides config
@@ -371,12 +398,17 @@ def run(
     if auto_select_branch is None and config.worktrees.auto_select.enabled:
         auto_select_branch = config.worktrees.auto_select.branch
 
-    # Build initial command with skip-permissions, extra_args, and extra-dirs
+    # Build initial command with skip-permissions, extra_args, extra-dirs, hooks
     initial_skip_args: list[str] = []
     if rt.skip_permissions:
         if init_agent_config:
             initial_skip_args = init_agent_config.skip_permissions_args
-    injected_args = [*initial_skip_args, *initial_agent_extra_args, *initial_extra_dirs]
+    injected_args = [
+        *initial_skip_args,
+        *initial_agent_extra_args,
+        *initial_extra_dirs,
+        *initial_hook_args,
+    ]
     if injected_args:
         initial_cmd = [detected.command, *injected_args, *args]
     else:
@@ -389,7 +421,7 @@ def run(
     # Create a dynamic command runner that re-detects agent on each run
     # This respects HIVE_AGENT changes from the interactive picker (Ctrl+A)
     run_with_dynamic_agent = _make_dynamic_agent_runner(
-        agent, args, resume, cli_specified_agent, ctx
+        agent, args, resume, cli_specified_agent, ctx, hive_hook
     )
 
     # Worktree selection and restart loop

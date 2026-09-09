@@ -223,6 +223,7 @@ def run_with_resume(
     skip_perm_args,
     agent_extra_args,
     extra_dir_args,
+    hook_args,
     args,
     resume,
     ctx: PaneContext | None = None,
@@ -235,6 +236,7 @@ def run_with_resume(
             *skip_perm_args,
             *agent_extra_args,
             *extra_dir_args,
+            *hook_args,
             *args,
         ]
         child_env = get_runtime_settings().build_child_env()
@@ -248,8 +250,8 @@ def run_with_resume(
             return 0
         # Resume failed, fall back to base command
 
-    # Build final command with skip-permissions, extra_args, and extra-dirs
-    injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args]
+    # Build final command with skip-permissions, extra_args, extra-dirs, hooks
+    injected = [*skip_perm_args, *agent_extra_args, *extra_dir_args, *hook_args]
     if injected:
         final_cmd = [current_cmd[0], *injected, *current_cmd[1:]]
     else:

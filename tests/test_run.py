@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import ANY, patch
 
 from conftest import CycloptsTestRunner
@@ -9,6 +10,8 @@ from conftest import CycloptsTestRunner
 from hive_cli.app import app
 from hive_cli.commands.run import _resolved_extra_dirs
 from hive_cli.config import get_runtime_settings, reload_config
+from hive_cli.core.errors import HiveError
+from hive_cli.hooks.templates import claude_settings
 
 
 class TestResolvedExtraDirs:
@@ -816,6 +819,140 @@ class TestRunProfile:
 
         expected_path = tmp_path / "hive" / "profiles" / "claude" / "work"
         assert captured_env.get("CLAUDE_CONFIG_DIR") == str(expected_path)
+
+
+class TestRunHooks:
+    """Tests for hive-hook injection when hooks.enabled is true (F5).
+
+    `shutil.which` is patched with a name-keyed side_effect rather than the
+    blanket return_value used elsewhere in this file: a blanket patch would
+    also answer the `hive-hook` lookup with the agent's own fake path.
+    """
+
+    @staticmethod
+    def _which(agent_path: dict[str, str]):
+        def _fake(name):
+            return agent_path.get(name)
+
+        return _fake
+
+    def test_run_injects_claude_settings_flag(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo
+    ):
+        config_file = temp_git_repo / ".hive.yml"
+        config_file.write_text("hooks:\n  enabled: true\n")
+
+        import subprocess as real_subprocess
+
+        with (
+            patch(
+                "shutil.which",
+                side_effect=self._which(
+                    {"claude": "/usr/bin/claude", "hive-hook": "/x/hive-hook"}
+                ),
+            ),
+            patch(
+                "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
+            ),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
+            patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ),
+            patch.object(real_subprocess, "Popen") as mock_run,
+        ):
+            reload_config()
+            mock_run.return_value.wait.return_value = 0
+            cli_runner.invoke(app, ["run", "-a", "claude"])
+            agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "claude"]
+            assert len(agent_calls) >= 1
+            call_args = agent_calls[0][0][0]
+            assert "--settings" in call_args
+            payload = json.loads(call_args[call_args.index("--settings") + 1])
+            assert payload == claude_settings("/x/hive-hook")
+
+    def test_run_injects_codex_notify_flag(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo
+    ):
+        config_file = temp_git_repo / ".hive.yml"
+        config_file.write_text("hooks:\n  enabled: true\n")
+
+        import subprocess as real_subprocess
+
+        with (
+            patch(
+                "shutil.which",
+                side_effect=self._which(
+                    {"codex": "/usr/bin/codex", "hive-hook": "/x/hive-hook"}
+                ),
+            ),
+            patch(
+                "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
+            ),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
+            patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ),
+            patch.object(real_subprocess, "Popen") as mock_run,
+        ):
+            reload_config()
+            mock_run.return_value.wait.return_value = 0
+            cli_runner.invoke(app, ["run", "-a", "codex"])
+            agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "codex"]
+            assert len(agent_calls) >= 1
+            call_args = agent_calls[0][0][0]
+            assert "-c" in call_args
+            assert 'notify=["/x/hive-hook","codex"]' in call_args
+
+    def test_run_hooks_disabled_by_default_omits_settings_flag(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo
+    ):
+        import subprocess as real_subprocess
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
+            ),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
+            patch("hive_cli.config.loader.find_config_files", return_value=[]),
+            patch("hive_cli.ui.flows.worktrees.os.execvpe"),
+            patch.object(real_subprocess, "Popen") as mock_run,
+        ):
+            reload_config()
+            mock_run.return_value.wait.return_value = 0
+            cli_runner.invoke(app, ["run", "-a", "claude"])
+            agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "claude"]
+            assert not any("--settings" in c[0][0] for c in agent_calls)
+
+    def test_run_hooks_enabled_but_hive_hook_missing_errors(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo
+    ):
+        """A clear CLI error, not a traceback, when there's nothing to inject."""
+        config_file = temp_git_repo / ".hive.yml"
+        config_file.write_text("hooks:\n  enabled: true\n")
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "hive_cli.ui.flows.worktrees.get_git_root", return_value=temp_git_repo
+            ),
+            patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
+            patch(
+                "hive_cli.config.loader.find_config_files",
+                return_value=[config_file],
+            ),
+            patch(
+                "hive_cli.commands.run.hive_hook_path",
+                side_effect=HiveError("hive-hook is not installed"),
+            ),
+        ):
+            reload_config()
+            result = cli_runner.invoke(app, ["run", "-a", "claude"])
+
+        assert result.exit_code == 1
+        assert "hive-hook is not installed" in result.output
 
 
 class TestRunHelp:
