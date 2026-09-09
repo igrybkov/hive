@@ -39,6 +39,11 @@ LAZY_COMMANDS: list[tuple[str, str, str]] = [
         "Open Zellij with AI agent layout.",
     ),
     (
+        "session",
+        "hive_cli.commands.session:session_app",
+        "Open the configured multiplexer (Zellij or tmux) with the AI agent layout.",
+    ),
+    (
         "wt",
         "hive_cli.commands.wt:wt_app",
         "Manage git worktrees for multi-agent development.",

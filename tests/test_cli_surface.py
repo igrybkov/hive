@@ -20,6 +20,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 COMMANDS: dict[str, list[str]] = {
     "run": [],
     "zellij": ["set-status", "set-title", "layout-path"],
+    "session": [],
     "wt": [
         "cd",
         "list",

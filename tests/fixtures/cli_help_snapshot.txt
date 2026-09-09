@@ -15,6 +15,7 @@ Manage AI coding agents and git worktrees for parallel development.
 │ pane            Create and manage agent panes.                                                   │
 │ rebase-check    Check if agent worktrees need rebasing against default branch.                   │
 │ run             Run AI coding agent in current directory.                                        │
+│ session         Open the configured multiplexer (Zellij or tmux) with the AI agent layout.       │
 │ status          Display status of all agent worktrees.                                           │
 │ tab             Open tool tabs and agent tabs on demand.                                         │
 │ task            Manage agent tasks.                                                              │
@@ -98,6 +99,17 @@ are static, as before.
 │ RENDERED --rendered --no-rendered  Explicit request for the rendered 'agent' session file (the   │
 │                                    default already renders it; kept for discoverability).        │
 │                                    [default: False]                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive session --help ===
+Usage: hive session [ARGS]
+
+Open the configured multiplexer (Zellij or tmux) with the AI agent layout.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a                Specific agent to use (overrides auto-detection). [env var:      │
+│                                 HIVE_AGENT]                                                      │
+│ RESTART --restart --no-restart  Auto-restart the multiplexer after it exits. [default: False]    │
+│ RESTART-DELAY --restart-delay   Delay in seconds between restarts (default: 0). [default: 0]     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive wt --help ===
 Usage: hive wt COMMAND
