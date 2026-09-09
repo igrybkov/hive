@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from hive_cli.core.errors import HiveError
 from hive_cli.layout.tabs import tool_tab
 from hive_cli.mux import get_mux
 from hive_cli.mux.base import PaneInfo, TabInfo
+from hive_cli.mux.tmux.backend import TmuxMux
 from hive_cli.mux.zellij import backend
 from hive_cli.mux.zellij.backend import ZellijMux, _pane_id
 from hive_cli.mux.zellij.kdl import render_tab_file
@@ -42,15 +42,13 @@ class TestGetMux:
         assert isinstance(get_mux(), ZellijMux)
         monkeypatch.delenv("HIVE_MUX_BACKEND")
         monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,123,0")
-        with pytest.raises(HiveError, match="tmux backend is not available yet"):
-            get_mux()
+        assert isinstance(get_mux(), TmuxMux)
 
     def test_explicit_backend_argument_wins_over_env(self, monkeypatch):
         monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,123,0")
         assert isinstance(get_mux("zellij"), ZellijMux)
         monkeypatch.setenv("ZELLIJ", "0")
-        with pytest.raises(HiveError):
-            get_mux("tmux")
+        assert isinstance(get_mux("tmux"), TmuxMux)
         assert get_mux("none") is None
 
 

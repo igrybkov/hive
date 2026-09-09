@@ -265,6 +265,20 @@ class ZellijConfig(HiveBaseSettings):
         return v
 
 
+class MuxConfig(HiveBaseSettings):
+    """Which terminal multiplexer backend `hive session` (and `get_mux()`) uses.
+
+    Attributes:
+        backend: "auto" picks Zellij inside a Zellij session (`ZELLIJ` set),
+            tmux inside a tmux session (`TMUX` set), else neither; "zellij"
+            or "tmux" force that backend regardless of environment.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="HIVE_MUX_")
+
+    backend: Literal["auto", "zellij", "tmux"] = "auto"
+
+
 class PaneConfig(BaseModel):
     """A single pane in a user-defined `tabs:` entry.
 

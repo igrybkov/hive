@@ -199,6 +199,12 @@ zellij:
     - Orest
     - Petro
 
+# Which terminal multiplexer backend `hive session`/`get_mux()` uses. "auto"
+# picks Zellij inside a Zellij session, tmux inside a tmux session, else
+# neither; "zellij"/"tmux" force that backend regardless of environment.
+mux:
+  backend: auto
+
 github:
   fetch_issues: true
   issue_limit: 20

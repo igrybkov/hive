@@ -23,6 +23,7 @@ from .schema import (
     AgentsConfig,
     GitHubConfig,
     HooksConfig,
+    MuxConfig,
     ResumeConfig,
     TabConfig,
     WorktreesConfig,
@@ -84,6 +85,7 @@ class HiveSettings(HiveBaseSettings):
     resume: Annotated[ResumeConfig, Field(default_factory=ResumeConfig)]
     worktrees: Annotated[WorktreesConfig, Field(default_factory=WorktreesConfig)]
     zellij: Annotated[ZellijConfig, Field(default_factory=ZellijConfig)]
+    mux: Annotated[MuxConfig, Field(default_factory=MuxConfig)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
     tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
