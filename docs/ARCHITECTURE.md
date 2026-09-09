@@ -4,9 +4,9 @@ This is the architecture reference `CLAUDE.md` points to. It is copied from
 the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
 redesign (issue #1), not only what A0 built. Package-map entries tagged
-`[F5]`/`[F6]` don't exist yet — they land with those later features.
+`[F6]` don't exist yet — they land with that later feature.
 Everything untagged is either already in the tree (built by A0, F0, F1, F2,
-F3, or F4) or is a pre-A0 module the refactor left in place.
+F3, F4, or F5) or is a pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -56,7 +56,7 @@ hive_cli/
            protocol.py   NDJSON ops (get/set/subscribe/restart/stop/ping/call), encode/decode
            server.py     PaneStateServer (hive run)          client.py  send/get_state/set_fields/list_pane_sockets
   git/     repo.py worktree.py status.py github.py analysis.py   (facts + effects on git/gh; no prompts, no prints)
-  agents/  detection.py profiles.py launch.py        launch.build_command(agent, opts) → Launch(argv, env); F5 adds hook args
+  agents/  detection.py profiles.py launch.py        get_extra_dirs_args, hive_hook_path/hook_args (F5); no unified build_command -- see F5 divergences
   layout/  model.py tabs.py keybinds.py resolve.py bundled/*.kdl   neutral tab/pane model, bundled tab definitions, keybind spec
   mux/     base.py       Mux protocol + PaneInfo/TabInfo; get_mux()
            zellij/       backend.py (CLI calls), kdl.py (render TabSpec/SessionSpec), keybinds.py (render keybind block)
@@ -83,7 +83,7 @@ hive_cli/
   commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py doctor.py
             pane.py tab.py
             session.py                                                                             [F6]
-  hooks/   entry.py templates.py                                                                   [F5]
+  hooks/   entry.py templates.py    hive-hook: entry.main() maps an agent hook payload to a pane status via templates.status_for()
 ```
 
 ## How parts connect
@@ -239,7 +239,7 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0/F0/F1/F2/F3/F4 status and divergences from this doc
+## A0/F0/F1/F2/F3/F4/F5 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
 and moved the codebase into it. F0 (done 2026-09-06) added the pane state
@@ -290,8 +290,20 @@ itself stays (`merge-preview`/`task` still use it). `toggle_control_plane()`
 now actually dedupes, resolving the F3 divergence noted below.
 `services/session.py` gained `restart_pane()`, also registered in
 `registry.OPS`, so the control plane never touches a pane socket directly.
-Still missing are the `[F5]`/`[F6]` entries and `core/models.py` (see the
-F2 divergences below for why it didn't materialize as a separate file).
+F5 (done 2026-09-09) added opt-in agent lifecycle hooks: `hooks/templates.py`
+(per-agent hook-event → pane-status tables, plus the settings hive injects to
+wire each agent's own hook mechanism to `hive-hook`) and `hooks/entry.py`
+(the stdlib-only `hive-hook` console script — reads the payload, one socket
+write via `state.client.set_fields`, always exits 0); `HooksConfig`
+(`hooks.enabled`) and `AgentHooksConfig` (`agents.configs.<name>.hooks.mode`:
+`cli` | `profile` | `unsupported`); `agents/launch.py:hive_hook_path()` +
+`hook_args()`, wired into `commands/run.py` and `services/pane.py` at the
+existing skip-permissions/extra_args/extra-dirs injection sites (see F5
+divergences for why there's no single `build_command`); and
+`agents/profiles.py:ensure_gemini_hooks()`, merged into a hive-managed
+profile's `.gemini/settings.json` only for a named profile. Still missing is
+the `[F6]` entry and `core/models.py` (see the F2 divergences below for why
+it didn't materialize as a separate file).
 
 F1 divergences from the package map and the F1 spec, all deliberate:
 
@@ -506,3 +518,44 @@ F4 divergences from the F4 spec, all deliberate:
   `ui/board.py:watch()` (the spec's own wording, "ui/views/status.py:watch()
   is deleted," names the wrong module — `board.watch()` is the generic loop
   `merge-preview` and `task` still depend on).
+
+F5 divergences from the F5 spec, all deliberate:
+
+- **There is no `agents/launch.py:build_command()`.** The F5 spec (and this
+  doc's own package-map line, before this update) assumed one existed for
+  hook args to slot into. F0-F4 never built it: agent-command assembly is
+  two separate inline sites — `commands/run.py`'s `injected_args` (feeds the
+  initial/execvp command) and `services/pane.py:run_with_resume`'s
+  `resume_cmd`/`injected` (feeds the dynamic-runner path) — each combining
+  skip-permissions, `extra_args`, extra-dirs, and now hook args in that
+  order. `hook_args()` is a plain function returning `list[str]`; both call
+  sites append its result last.
+- **`hooks.enabled` (with a "cli"-mode current agent) is added to
+  `_compute_use_dynamic_runner`'s conditions**, not in the spec's interface
+  list. The execvp fast path (`_single_run`) only swaps the binary name on a
+  Ctrl+A agent switch (`[rt.agent, *command[1:]]`), keeping the rest of the
+  command baked in from the *original* agent — the same reason
+  `has_agent_extra_args`/`skip_permissions` already force the dynamic
+  runner. Without this, a claude `--settings {...}` payload could be handed
+  to codex's argv after a mid-session agent switch.
+- **`hook_args()` takes an already-resolved `hive_hook: str` and a
+  `settings: HiveSettings`, not just `agent: str`.** `hive_hook_path()` can
+  raise `HiveError` (`hive-hook` not installed) and is resolved once per
+  `hive run` invocation, not per restart-loop iteration, so a missing
+  `hive-hook` fails fast with a clear CLI error instead of retrying a
+  filesystem/PATH lookup on every restart.
+- **Codex's `notify=[...]` mechanism is now documented as "legacy" inside
+  Codex's own binary strings**, superseded by a native `hooks.json` system
+  with Claude-shaped event names (`PreToolUse`, `PermissionRequest`, ...).
+  Verified against the installed CLI (0.153.4) and current docs on
+  2026-09-09: `notify` still fires, still carries `{"type":
+  "agent-turn-complete", ...}` as the final argv token exactly as documented
+  — the spec's simpler single-flag approach still works and was kept as-is
+  rather than adopting the newer file-based hook system, which would need a
+  written-config "profile"-like mode instead of a CLI flag.
+- **Gemini's hooks reference confirms the tables verified, not new ones.**
+  `.gemini/settings.json`'s `hooks` object and the `SessionStart`/
+  `BeforeAgent`/`BeforeTool`/`AfterTool`/`AfterAgent`/`SessionEnd` event
+  names match the spec exactly (checked against geminicli.com/docs/hooks on
+  2026-09-09); `gemini_settings()` and `ensure_gemini_hooks()` ship
+  unchanged from the spec's shapes.

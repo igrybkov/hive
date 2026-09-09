@@ -82,6 +82,38 @@ with `nc -U <socket>`: the first line is the current state; send
 `{"op":"set","fields":{"status_text":"[x]"}}` to change it, which is what
 `hive zellij set-status` does.
 
+#### Agent hooks
+
+Set `hooks.enabled: true` and `hive run` wires each agent's own hook/notify
+mechanism to a tiny `hive-hook` executable, so the pane's `status` (and with
+it the tab name and the control plane's status column) reflects busy /
+waiting-for-permission / idle / done instead of only running / exited.
+`hive-hook` is stdlib-only, does one socket write, and always exits `0` — a
+failing hook never blocks or annoys the agent.
+
+```yaml
+hooks:
+  enabled: true # off by default
+```
+
+hive never edits your global agent settings — it injects hook config three
+different ways depending on the agent:
+
+| Agent          | Wiring                                            | Notes                                                  |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------- |
+| `claude`       | `--settings '{"hooks":{...}}'` on every launch     | Merges with `~/.claude/settings.json`; doesn't touch it |
+| `codex`        | `-c notify=["<hive-hook>","codex"]` on every launch | **Replaces** any `notify` you've set in `config.toml` while hooks are enabled — hive doesn't merge notify |
+| `gemini`       | Merged into the profile's `.gemini/settings.json`  | Only for a **named** `--profile`; your real `~/.gemini/settings.json` is never touched |
+| `copilot`      | Not wired                                          | Copilot's hooks live in the repo's `.github/hooks`, outside hive's reach |
+| `agent`/`cursor-agent` | Not wired                                  | `CURSOR_CONFIG_DIR` doesn't relocate `hooks.json`      |
+
+For Claude and Codex ("cli" mode), hooks apply to every launch of that agent.
+For Gemini ("profile" mode), they only apply when you pass `-p`/`--profile`
+with a named profile (`hive run -p work`) — running with the default profile
+never touches your real Gemini config. Each agent's wiring mode is
+configurable per-agent under `agents.configs.<name>.hooks.mode`
+(`cli` | `profile` | `unsupported`).
+
 ### `hive zellij`
 
 Open Zellij with an AI agent layout.
@@ -495,6 +527,10 @@ github:
 # Additional directories to pass to the agent via its extra_dirs_flag.
 # Relative paths resolve against the main repo root.
 extra_dirs: []
+
+# Agent lifecycle hooks -> pane status (see "Agent hooks" above).
+hooks:
+  enabled: false
 ```
 
 ### Configuration Options
@@ -718,6 +754,18 @@ Each item can be:
 - **Default:** `[]`
 - **Description:** Additional directories to pass to the agent via its `extra_dirs_flag`. Relative paths resolve against the main repo root.
 
+#### `hooks.enabled`
+
+- **Type:** `boolean`
+- **Default:** `false`
+- **Description:** Wire agent lifecycle hooks to the pane's status (see [Agent hooks](#agent-hooks)).
+
+#### `agents.configs.<name>.hooks.mode`
+
+- **Type:** `"cli" | "profile" | "unsupported"`
+- **Default:** `"unsupported"` (`"cli"` for claude/codex, `"profile"` for gemini, in the bundled defaults)
+- **Description:** How hive wires this agent's hook mechanism to `hive-hook` when `hooks.enabled` is true (see [Agent hooks](#agent-hooks)).
+
 ### Environment Variables
 
 Environment variables use the `HIVE_` prefix and take precedence over config files:
@@ -737,6 +785,7 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_ZELLIJ_SESSION_NAME`        | string  | Session name template                          |
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
 | `HIVE_GITHUB_ISSUE_LIMIT`         | integer | Max issues to fetch                            |
+| `HIVE_HOOKS_ENABLED`              | boolean | Wire agent lifecycle hooks to the pane's status |
 | `HIVE_MUX_BACKEND`                | string  | Multiplexer backend (`zellij`) instead of auto-detection |
 | `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
 | `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels` when self-assigned |
