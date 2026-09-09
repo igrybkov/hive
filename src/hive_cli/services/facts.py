@@ -1,4 +1,5 @@
-"""Git and GitHub facts refreshed off the UI thread.
+"""Git and GitHub facts refreshed off the UI thread, plus the control-plane
+socket (F4) that shares them across the session.
 
 The picker's refiners and `hive doctor` call these; nothing here prints or
 prompts, every command has a timeout, and the loops check `cancel` so a
@@ -8,15 +9,21 @@ hive reads its mtime to throttle fetches and never writes it.
 
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from ..config import get_settings
-from ..core import proc
+from ..core import paths, proc
+from ..core.errors import HiveError
 from ..git import GitHubIssue, GitSummary, WorktreeInfo, git_summary
 from ..git import github as github_facts
+from ..state import client
+from ..state.server import Connection, JsonLineServer
+from . import registry
 
 
 def fetch_if_stale(
@@ -74,3 +81,71 @@ def issues(main_repo: Path, *, max_age_s: float = 60.0) -> list[GitHubIssue] | N
     if fetched is not None:
         return fetched
     return github_facts.load_cached_issues(cache_path) if cache_path.exists() else None
+
+
+# ---------------------------------------------------------------------------
+# F4: the control-plane socket
+# ---------------------------------------------------------------------------
+
+
+class ControlServer(JsonLineServer):
+    """The control plane's socket: `paths.control_sock(session)`.
+
+    `facts` is called on a handler thread on every `{"op":"facts"}`; callers
+    keep it cheap (return the latest already-computed dict, never fetch).
+    """
+
+    _THREAD_NAME = "hive-control-server"
+
+    def __init__(
+        self,
+        sock_path: Path,
+        *,
+        pane_id: str,
+        facts: Callable[[], dict[str, GitSummary]],
+    ):
+        super().__init__(sock_path)
+        self._pane_id = pane_id
+        self._facts = facts
+
+    def greeting(self) -> dict:
+        return {
+            "type": "state",
+            "kind": "control",
+            "pane_id": self._pane_id,
+            "hive_pid": os.getpid(),
+        }
+
+    def handle(self, msg: dict, conn: Connection) -> dict:
+        op = msg.get("op")
+        if op == "ping":
+            return {"type": "pong"}
+        if op == "get":
+            return self.greeting()
+        if op == "facts":
+            return {"type": "facts", "facts": registry.jsonable(self._facts())}
+        if op == "call":
+            return self._call(msg)
+        return {"type": "error", "message": f"unknown op: {op}"}
+
+    def _call(self, msg: dict) -> dict:
+        name = msg.get("name")
+        args = msg.get("args") or {}
+        if not isinstance(name, str) or not isinstance(args, dict):
+            return {"type": "error", "message": "bad call"}
+        try:
+            value = registry.call(name, **args)
+        except HiveError as exc:
+            return {"type": "error", "message": str(exc)}
+        return {"type": "result", "value": registry.jsonable(value)}
+
+
+def summaries_via_control(
+    session: str, *, timeout: float = 0.5
+) -> dict[Path, GitSummary] | None:
+    """Ask a running control plane for its facts; None when no control plane
+    answers (the caller should fetch/compute them itself)."""
+    reply = client.send(paths.control_sock(session), {"op": "facts"}, timeout=timeout)
+    if reply is None or reply.get("type") != "facts":
+        return None
+    return {Path(p): GitSummary(**d) for p, d in reply["facts"].items()}

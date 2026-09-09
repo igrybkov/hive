@@ -1,11 +1,17 @@
-"""PaneStateServer: serves one pane's PaneState on a Unix socket.
+"""JsonLineServer (base) and PaneStateServer: Unix-socket NDJSON servers.
 
-`hive run` owns exactly one of these per pane. The socket is served from a
-daemon thread (socketserver.ThreadingUnixStreamServer, one handler thread per
-connection); `update()` may be called from any thread. `on_change` runs on a
-timer thread, coalesced: at most once per `coalesce_s` after the last
-update, with the latest state -- that is where the multiplexer rename
-happens, so a burst of updates costs one `zellij action`.
+`JsonLineServer` is the shared plumbing (F4): one daemon thread accepting
+connections, one handler thread per connection, greeting on connect, one
+`handle(msg, conn)` dispatch per line. A subclass returns None from `handle`
+to take over a connection itself (PaneStateServer's `subscribe` blocks in a
+queue read loop, using `conn.send`) -- the handler thread then stops reading
+lines and lets the connection close.
+
+`hive run` owns exactly one `PaneStateServer` per pane. `update()` may be
+called from any thread. `on_change` runs on a timer thread, coalesced: at
+most once per `coalesce_s` after the last update, with the latest state --
+that is where the multiplexer rename happens, so a burst of updates costs
+one `zellij action`.
 
 Wire protocol: see state/protocol.py. Stdlib only.
 """
@@ -21,6 +27,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from . import protocol
 from .pane_state import CLIENT_SETTABLE, STATUSES, PaneState
@@ -48,81 +55,62 @@ def _validate_client_fields(fields: object) -> str | None:
     return None
 
 
-class _Server(socketserver.ThreadingUnixStreamServer):
+class Connection(Protocol):
+    def send(self, msg: dict) -> None: ...
+
+
+class _JsonLineTCPServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     block_on_close = False  # subscriber handlers block in q.get(); do not join them
 
-    def __init__(self, path: str, owner: PaneStateServer):
+    def __init__(self, path: str, owner: JsonLineServer):
         self.owner = owner
-        super().__init__(path, _Handler)
+        super().__init__(path, _JsonLineHandler)
 
 
-class _Handler(socketserver.StreamRequestHandler):
+class _JsonLineHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
-        owner: PaneStateServer = self.server.owner
+        owner: JsonLineServer = self.server.owner
         try:
-            self._send(owner._state_msg())
+            greeting = owner.greeting()
+            if greeting is not None:
+                self.send(greeting)
             for raw in self.rfile:
                 msg = protocol.decode(raw)
                 if msg is None:
-                    self._send(_error("bad json"))
-                elif msg.get("op") == "subscribe":
-                    self._subscribe(owner)
+                    self.send(_error("bad json"))
+                    continue
+                reply = owner.handle(msg, self)
+                if reply is None:  # owner took over the connection (e.g. subscribe)
                     return
-                else:
-                    self._send(owner._handle(msg))
+                self.send(reply)
         except OSError:
             return
 
-    def _send(self, msg: dict) -> None:
+    def send(self, msg: dict) -> None:
         self.wfile.write(protocol.encode(msg))
 
-    def _subscribe(self, owner: PaneStateServer) -> None:
-        q, snapshot = owner._add_subscriber()
-        try:
-            self._send(snapshot)
-            while True:
-                try:
-                    item = q.get(timeout=PING_AFTER_S)
-                except queue.Empty:
-                    self._send({"type": "ping"})
-                    continue
-                if item is None:  # server closing
-                    return
-                self._send(item)
-        finally:
-            owner._remove_subscriber(q)
 
+class JsonLineServer:
+    """Unix-socket NDJSON server: one daemon thread, one handler thread per
+    client. Subclasses implement `greeting()` (sent once, on connect; None
+    skips it) and `handle(msg, conn)` (per line; None means the subclass
+    took over `conn` itself and the handler should stop reading)."""
 
-class PaneStateServer:
-    """Serves one pane's state on a Unix socket from a daemon thread.
+    _THREAD_NAME = "hive-jsonline-server"
 
-    Thread safety: `update()` may be called from any thread; `on_change` is
-    called from a timer thread, coalesced: at most once per `coalesce_s`
-    after the last update, with the latest state.
-    """
-
-    def __init__(
-        self,
-        sock_path: Path,
-        state: PaneState,
-        *,
-        on_change: Callable[[PaneState], None] | None = None,
-        coalesce_s: float = 0.2,
-    ):
+    def __init__(self, sock_path: Path):
         self.sock_path = Path(sock_path)
-        self.stop_requested = threading.Event()
-        self.restart_requested = threading.Event()
-        self._state = state
-        self._on_change = on_change
-        self._coalesce_s = coalesce_s
         self._lock = threading.RLock()
-        self._subscribers: list[queue.Queue] = []
-        self._timer: threading.Timer | None = None
-        self._pending = False
-        self._server: _Server | None = None
+        self._server: _JsonLineTCPServer | None = None
         self._thread: threading.Thread | None = None
         self._closed = False
+
+    def greeting(self) -> dict | None:
+        return None
+
+    def handle(self, msg: dict, conn: Connection) -> dict | None:
+        raise NotImplementedError
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -133,43 +121,93 @@ class PaneStateServer:
             self.sock_path.unlink()
         except FileNotFoundError:
             pass
-        self._server = _Server(str(self.sock_path), self)
+        self._server = _JsonLineTCPServer(str(self.sock_path), self)
         os.chmod(self.sock_path, 0o600)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             kwargs={"poll_interval": 0.2},
             daemon=True,
-            name="hive-pane-server",
+            name=self._THREAD_NAME,
         )
         self._thread.start()
 
     def close(self) -> None:
-        """Flush a pending on_change, stop serving, unlink the socket. Idempotent."""
+        """Stop serving, unlink the socket. Idempotent.
+
+        `_before_close`/`_after_close` are subclass hooks run (respectively)
+        before the server stops serving and after `server_close()` but
+        before the socket file is unlinked.
+        """
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            if self._timer is not None:
-                self._timer.cancel()
-        self.flush()
+        self._before_close()
         if self._server is not None:
             if self._thread is not None:  # shutdown() blocks forever if never served
                 self._server.shutdown()
             self._server.server_close()
-        with self._lock:
-            for q in self._subscribers:
-                q.put(None)
+        self._after_close()
         try:
             self.sock_path.unlink()
         except OSError:
             pass
 
-    def __enter__(self) -> PaneStateServer:
+    def _before_close(self) -> None:
+        """Hook: runs once, before the server stops serving."""
+
+    def _after_close(self) -> None:
+        """Hook: runs once, after server_close(), before the socket is unlinked."""
+
+    def __enter__(self) -> JsonLineServer:
         self.start()
         return self
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+class PaneStateServer(JsonLineServer):
+    """Serves one pane's state on a Unix socket from a daemon thread.
+
+    Thread safety: `update()` may be called from any thread; `on_change` is
+    called from a timer thread, coalesced: at most once per `coalesce_s`
+    after the last update, with the latest state.
+    """
+
+    _THREAD_NAME = "hive-pane-server"
+
+    def __init__(
+        self,
+        sock_path: Path,
+        state: PaneState,
+        *,
+        on_change: Callable[[PaneState], None] | None = None,
+        coalesce_s: float = 0.2,
+    ):
+        super().__init__(sock_path)
+        self.stop_requested = threading.Event()
+        self.restart_requested = threading.Event()
+        self._state = state
+        self._on_change = on_change
+        self._coalesce_s = coalesce_s
+        self._subscribers: list[queue.Queue] = []
+        self._timer: threading.Timer | None = None
+        self._pending = False
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def _before_close(self) -> None:
+        """Cancel the coalescing timer, then flush a pending on_change now."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+        self.flush()
+
+    def _after_close(self) -> None:
+        with self._lock:
+            for q in self._subscribers:
+                q.put(None)
 
     # -- state -------------------------------------------------------------
 
@@ -225,6 +263,15 @@ class PaneStateServer:
 
     # -- protocol (called from handler threads) -----------------------------
 
+    def greeting(self) -> dict:
+        return self._state_msg()
+
+    def handle(self, msg: dict, conn: Connection) -> dict | None:
+        if msg.get("op") == "subscribe":
+            self._subscribe(conn)
+            return None
+        return self._handle(msg)
+
     def _state_msg(self) -> dict:
         with self._lock:
             return {"type": "state", **self._state.to_dict()}
@@ -239,6 +286,22 @@ class PaneStateServer:
         with self._lock:
             if q in self._subscribers:
                 self._subscribers.remove(q)
+
+    def _subscribe(self, conn: Connection) -> None:
+        q, snapshot = self._add_subscriber()
+        try:
+            conn.send(snapshot)
+            while True:
+                try:
+                    item = q.get(timeout=PING_AFTER_S)
+                except queue.Empty:
+                    conn.send({"type": "ping"})
+                    continue
+                if item is None:  # server closing
+                    return
+                conn.send(item)
+        finally:
+            self._remove_subscriber(q)
 
     def _handle(self, msg: dict) -> dict:
         op = msg.get("op")
