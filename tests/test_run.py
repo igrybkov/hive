@@ -908,8 +908,9 @@ class TestRunHooks:
     def test_run_hooks_disabled_by_default_omits_settings_flag(
         self, cli_runner: CycloptsTestRunner, temp_git_repo
     ):
-        import subprocess as real_subprocess
-
+        """Hooks disabled + no other injected args -> the execvp fast path,
+        so there's no Popen call to inspect; assert on the execvpe argv
+        instead (also confirms the fast path is actually taken)."""
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
@@ -917,14 +918,13 @@ class TestRunHooks:
             ),
             patch("hive_cli.commands.run.get_main_repo", return_value=temp_git_repo),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
-            patch("hive_cli.ui.flows.worktrees.os.execvpe"),
-            patch.object(real_subprocess, "Popen") as mock_run,
+            patch("hive_cli.services.pane.os.execvpe") as mock_exec,
         ):
             reload_config()
-            mock_run.return_value.wait.return_value = 0
             cli_runner.invoke(app, ["run", "-a", "claude"])
-            agent_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "claude"]
-            assert not any("--settings" in c[0][0] for c in agent_calls)
+            assert mock_exec.called
+            argv = mock_exec.call_args[0][1]
+            assert "--settings" not in argv
 
     def test_run_hooks_enabled_but_hive_hook_missing_errors(
         self, cli_runner: CycloptsTestRunner, temp_git_repo
