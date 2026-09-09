@@ -540,10 +540,16 @@ F5 divergences from the F5 spec, all deliberate:
   to codex's argv after a mid-session agent switch.
 - **`hook_args()` takes an already-resolved `hive_hook: str` and a
   `settings: HiveSettings`, not just `agent: str`.** `hive_hook_path()` can
-  raise `HiveError` (`hive-hook` not installed) and is resolved once per
-  `hive run` invocation, not per restart-loop iteration, so a missing
-  `hive-hook` fails fast with a clear CLI error instead of retrying a
-  filesystem/PATH lookup on every restart.
+  raise `HiveError` (`hive-hook` not installed); `commands/run.py` resolves
+  it once up front and fails fast with a clear CLI error rather than a
+  traceback deep in the restart loop. That single resolution is only reused
+  for the "cli"-mode path (Claude/Codex CLI args), which is why
+  `run_with_dynamic_agent` threads the same `hive_hook` string through on
+  every iteration instead of re-resolving it. The "profile"-mode path
+  (Gemini) is separate: `resolve_profile_env` calls
+  `launch.hive_hook_path()` itself, once per call (up to twice per
+  restart-loop iteration when `--resume` is configured) -- a filesystem/PATH
+  lookup, not a spawn, so repeating it is harmless but not "resolved once".
 - **Codex's `notify=[...]` mechanism is now documented as "legacy" inside
   Codex's own binary strings**, superseded by a native `hooks.json` system
   with Claude-shaped event names (`PreToolUse`, `PermissionRequest`, ...).
