@@ -27,6 +27,17 @@ class TestBundledTabs:
         with pytest.raises(HiveError):
             tool_tab("nope", hive="/opt/hive")
 
+    def test_teams_defaults_to_nested_tmux_for_zellij(self):
+        tab = tool_tab("teams", hive="/opt/hive")
+        assert "tmux new-session" in tab.panes[0].command[-1]
+
+    def test_teams_runs_claude_directly_on_tmux_backend(self):
+        tab = tool_tab("teams", hive="/opt/hive", backend="tmux")
+        assert tab.panes[0].command[-1] == (
+            "env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux"
+        )
+        assert all("tmux new-session" not in p.command[-1] for p in tab.panes)
+
 
 class TestResolveTab:
     def test_user_tab_overrides_bundled_name(self):
@@ -51,6 +62,11 @@ class TestResolveTab:
     def test_bundled_name_without_override(self):
         tab = resolve_tab("nvim", hive="/opt/hive", user_tabs={})
         assert tab.name == "nvim"
+
+    def test_backend_threads_through_to_teams(self):
+        tab = resolve_tab("teams", hive="/opt/hive", user_tabs={}, backend="tmux")
+        assert "claude --teammate-mode tmux" in tab.panes[0].command[-1]
+        assert "tmux new-session" not in tab.panes[0].command[-1]
 
     def test_string_command_is_shlex_split(self):
         user_tabs = {

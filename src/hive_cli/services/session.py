@@ -23,9 +23,11 @@ from ..core import paths
 from ..core.errors import HiveError
 from ..git import WorktreeInfo, get_main_repo, list_worktrees
 from ..layout.resolve import resolve_layout
-from ..layout.tabs import agents_tab, resolve_tab
+from ..layout.tabs import agents_tab, resolve_tab, session_spec
 from ..mux import get_mux
 from ..mux.base import Mux, PaneInfo
+from ..mux.tmux.backend import TmuxMux
+from ..mux.tmux.conf import render_conf
 from ..mux.zellij.kdl import render_session_file
 from ..state import client
 from ..state.pane_state import label_for, next_free_pane_id
@@ -33,6 +35,10 @@ from . import registry
 from .restart import RestartFloor
 
 AGENTS_TAB = "agents"
+
+
+def _noop() -> None:
+    return None
 
 
 def session_name(template: str, *, repo: str, agent: str) -> str:
@@ -80,6 +86,41 @@ def attach_argv(
     return mux.attach_argv(full_session_name, resolved)
 
 
+def prepare_tmux_attach(
+    full_session_name: str, *, mux: Mux, hive: str, settings: HiveSettings
+) -> tuple[list[str], Callable[[], None]]:
+    """tmux's counterpart to `attach_argv`: render tmux.conf, return the
+    attach argv plus an `ensure_session` callback for `start()` to call
+    before every attach attempt.
+
+    Unlike Zellij's `attach --create`, tmux's `attach-session` does not
+    recreate a session that died between `--restart` loop iterations, so
+    `ensure_session` (idempotent: `TmuxMux.bootstrap` no-ops when the
+    session already exists) has to run every time, not just once here.
+
+    Only "agent" has a tmux rendering (`layout.tabs.session_spec` ->
+    `mux.tmux.conf.render_conf`, the tmux analogue of the KDL session
+    file); any other configured layout has no tmux meaning and raises.
+    """
+    if settings.zellij.layout != "agent":
+        raise HiveError(
+            f"the tmux backend only supports the 'agent' layout "
+            f"(configured: {settings.zellij.layout!r})",
+            hint="set zellij.layout: agent, or switch mux.backend to zellij",
+        )
+    spec = session_spec(name=full_session_name, hive=hive, settings=settings)
+    conf_dir = paths.layouts_dir() / full_session_name
+    conf_dir.mkdir(parents=True, exist_ok=True)
+    conf_path = conf_dir / "tmux.conf"
+    conf_path.write_text(render_conf(spec, hive=hive))
+    server = getattr(mux, "server", "hive")
+
+    def ensure_session() -> None:
+        TmuxMux(server=server, conf=conf_path).bootstrap(spec)
+
+    return mux.attach_argv(full_session_name, str(conf_path)), ensure_session
+
+
 def clean_stale_sock_dir(mux: Mux | None, session: str) -> None:
     """Remove the session's pane-socket dir when no such session is running.
 
@@ -102,27 +143,34 @@ def start(
     on_restart: Callable[[], None],
     on_stop: Callable[[], None],
     restart_floor: RestartFloor | None = None,
+    ensure_session: Callable[[], None] = _noop,
 ) -> None:
-    """Launch zellij: hand off the process, or loop restarting it on exit.
+    """Launch the mux: hand off the process, or loop restarting it on exit.
 
     Args:
-        cmd: The `zellij ... attach --create <session>` argv.
+        cmd: The attach argv (`zellij [--layout ...] attach --create
+            <session>`, or `tmux [-f conf] attach-session -t <session>`).
         env: Child environment.
         session: The full session name (for stale pane-socket cleanup).
         mux: The multiplexer backend (None skips the cleanup).
-        restart: Auto-restart zellij after it exits.
+        restart: Auto-restart the mux after it exits.
         restart_delay: Seconds to wait between restarts.
-        on_restart: Called after zellij exits, before each restart.
+        on_restart: Called after the mux exits, before each restart.
         on_stop: Called on Ctrl+C while restart-looping.
         restart_floor: Backoff after fast exits (default: a real one).
+        ensure_session: Called before every attach attempt (`prepare_tmux_attach`'s
+            bootstrap re-check; a no-op for Zellij, whose `attach --create`
+            already recreates a session that died between restarts).
     """
     clean_stale_sock_dir(mux, session)
     if not restart:
+        ensure_session()
         os.execvpe(cmd[0], cmd, env)
         return
     floor = restart_floor or RestartFloor()
     try:
         while True:
+            ensure_session()
             floor.started()
             subprocess.run(cmd, env=env)
             on_restart()
@@ -239,7 +287,7 @@ def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
             focus=focus,
         )
     else:
-        spec = resolve_tab(name, hive=hive, user_tabs=settings.tabs)
+        spec = resolve_tab(name, hive=hive, user_tabs=settings.tabs, backend=mux.name)
     result = mux.new_tab(spec, focus=focus)
     if result is None:
         raise HiveError(f"failed to open tab: {name}")

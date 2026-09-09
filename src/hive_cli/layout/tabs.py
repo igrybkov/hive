@@ -73,7 +73,20 @@ def _fish(script: str) -> tuple[str, ...]:
     return ("fish", "-c", script)
 
 
-def _teams_tab(hive: str) -> TabSpec:
+_TEAM_CMD_TMUX = (
+    "env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux"
+)
+
+
+def _teams_tab(hive: str, *, backend: str = "zellij") -> TabSpec:
+    """Claude teammate mode always runs its own tmux session for its panes.
+
+    Under Zellij that has to be a *nested* private tmux session (name keyed
+    off $ZELLIJ_SESSION_NAME + branch, via `_TEAM_CMD`); under the tmux
+    backend the pane is already inside the one tmux session hive itself
+    manages, so nesting would either be refused ("sessions should be nested
+    with care") or just confusing -- run claude directly instead.
+    """
     panes = tuple(
         PaneSpec(
             name=f"team-{i}",
@@ -84,7 +97,7 @@ def _teams_tab(hive: str) -> TabSpec:
                 "--restart",
                 "-w=-",
                 "-c",
-                _TEAM_CMD.format(n=i),
+                _TEAM_CMD_TMUX if backend == "tmux" else _TEAM_CMD.format(n=i),
             ),
             suspended=True,
         )
@@ -224,18 +237,26 @@ def _tab_from_config(name: str, config: TabConfig) -> TabSpec:
     return TabSpec(name=name, panes=tuple(_pane_from_config(p) for p in config.panes))
 
 
-def tool_tab(name: str, *, hive: str) -> TabSpec:
-    """Bundled tool tabs by name; raises HiveError for an unknown name."""
+def tool_tab(name: str, *, hive: str, backend: str = "zellij") -> TabSpec:
+    """Bundled tool tabs by name; raises HiveError for an unknown name.
+
+    `backend` only matters to "teams" (see `_teams_tab`); every other
+    bundled tab ignores it.
+    """
     if name not in BUNDLED:
         raise HiveError(f"unknown tab: {name}")
+    if name == "teams":
+        return _teams_tab(hive, backend=backend)
     return BUNDLED[name](hive)
 
 
-def resolve_tab(name: str, *, hive: str, user_tabs: dict[str, TabConfig]) -> TabSpec:
+def resolve_tab(
+    name: str, *, hive: str, user_tabs: dict[str, TabConfig], backend: str = "zellij"
+) -> TabSpec:
     """User `tabs:` win over bundled names."""
     if name in user_tabs:
         return _tab_from_config(name, user_tabs[name])
-    return tool_tab(name, hive=hive)
+    return tool_tab(name, hive=hive, backend=backend)
 
 
 def session_spec(*, name: str, hive: str, settings: HiveSettings) -> SessionSpec:
