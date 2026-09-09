@@ -118,7 +118,7 @@ def start(
     """
     clean_stale_sock_dir(mux, session)
     if not restart:
-        os.execvpe("zellij", cmd, env)
+        os.execvpe(cmd[0], cmd, env)
         return
     floor = restart_floor or RestartFloor()
     try:

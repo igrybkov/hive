@@ -57,10 +57,15 @@ async def _follow(sock: Path, queue: asyncio.Queue[SessionEvent]) -> None:
     The greeting and the subscribe reply both carry the current state at the
     same version; dedupe on version so that pair produces exactly one
     PaneAdded, not a spurious PaneStateChanged right behind it. Swallows a
-    dead/vanished socket; always emits PaneRemoved on the way out.
+    dead/vanished socket; always emits PaneRemoved on the way out, keyed by
+    the pane's own (raw, un-sanitised) id from the last state seen -- not
+    `sock.stem`, which for tmux ids is the sanitised socket filename
+    (`paths.pane_sock`: "%7" -> "p7.sock") and would never match the "%7"
+    key `_reduce`'s state dict actually uses.
     """
     writer: asyncio.StreamWriter | None = None
     last_version: int | None = None
+    last_pane_id: str | None = None
     try:
         reader, writer = await asyncio.open_unix_connection(str(sock))
         writer.write(protocol.encode({"op": "subscribe"}))
@@ -76,13 +81,14 @@ async def _follow(sock: Path, queue: asyncio.Queue[SessionEvent]) -> None:
                 PaneAdded(state) if last_version is None else PaneStateChanged(state)
             )
             last_version = state.version
+            last_pane_id = state.pane_id
             await queue.put(event)
     except (ConnectionRefusedError, FileNotFoundError, OSError):
         pass
     finally:
         if writer is not None:
             writer.close()
-        await queue.put(PaneRemoved(sock.stem))
+        await queue.put(PaneRemoved(last_pane_id or sock.stem))
 
 
 async def _discover(

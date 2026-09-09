@@ -46,12 +46,23 @@ def _sanitize(session: str) -> str:
     return _SANITIZE_RE.sub("_", session)[:32]
 
 
+def _sanitize_pane_id(pane_id: str) -> str:
+    """tmux pane/window ids keep their sigil ("%7", "@3"); socket file names
+    can't, so swap it for a letter ("p7", "w3"). Zellij's plain-digit ids
+    pass through unchanged."""
+    if pane_id.startswith("%"):
+        return f"p{pane_id[1:]}"
+    if pane_id.startswith("@"):
+        return f"w{pane_id[1:]}"
+    return pane_id
+
+
 def session_sock_dir(session: str) -> Path:
     return hive_runtime_dir() / _sanitize(session)
 
 
 def pane_sock(session: str, pane_id: str) -> Path:
-    return session_sock_dir(session) / f"{pane_id}.sock"
+    return session_sock_dir(session) / f"{_sanitize_pane_id(pane_id)}.sock"
 
 
 def control_sock(session: str) -> Path:

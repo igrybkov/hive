@@ -56,7 +56,11 @@ def _pane_info(fields: list[str]) -> PaneInfo | None:
         cwd=cwd,
         focused=active == "1",
         exited=dead == "1",
-        suspended=command == "hive" and title.startswith("hold:"),
+        # Not `command == "hive"` (F6-tmux.md's own literal wording): a
+        # `uv tool install`ed hive reports its interpreter as
+        # #{pane_current_command} (verified: "python3.14"), never "hive".
+        # The "hold: " title is unique to hive.pane.hold and sufficient alone.
+        suspended=title.startswith("hold:"),
     )
 
 

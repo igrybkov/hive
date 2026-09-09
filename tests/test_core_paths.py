@@ -41,3 +41,17 @@ def test_pane_sock_path_is_short(monkeypatch):
     sock = paths.pane_sock("a" * 32, "12345")
     assert len(str(sock)) <= 100
     assert sock.name == "12345.sock"
+
+
+def test_pane_sock_sanitizes_tmux_pane_sigil(monkeypatch):
+    from hive_cli.core import paths
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/tmp/hvabc")
+    assert paths.pane_sock("myrepo", "%7").name == "p7.sock"
+
+
+def test_pane_sock_sanitizes_tmux_window_sigil(monkeypatch):
+    from hive_cli.core import paths
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/tmp/hvabc")
+    assert paths.pane_sock("myrepo", "@3").name == "w3.sock"

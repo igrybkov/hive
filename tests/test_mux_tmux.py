@@ -209,8 +209,12 @@ def test_new_tab_applies_all_panes(fake_proc):
 
 def test_list_panes_parses_format(monkeypatch, fake_proc):
     monkeypatch.delenv("TMUX", raising=False)
+    # A `uv tool install`ed hive reports its interpreter, not "hive", as
+    # #{pane_current_command} (verified on this machine: "python3.14") --
+    # suspended detection must key on the "hold: " title alone.
     stdout = (
-        "%0\t@0\tIllia\tbash\t/repo\t1\t0\n%1\t@0\thold: claude\thive\t/repo\t0\t0\n"
+        "%0\t@0\tIllia\tbash\t/repo\t1\t0\n"
+        "%1\t@0\thold: claude\tpython3.14\t/repo\t0\t0\n"
     )
     fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout=stdout)
     panes = TmuxMux().list_panes()
