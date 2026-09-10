@@ -3,10 +3,9 @@
 This is the architecture reference `CLAUDE.md` points to. It is copied from
 the project's master plan (`.claude/plans/issue-1-tab-management.md`) and
 describes the **target** layering and package map for the full `hive`
-redesign (issue #1), not only what A0 built. Package-map entries tagged
-`[F6]` don't exist yet — they land with that later feature.
-Everything untagged is either already in the tree (built by A0, F0, F1, F2,
-F3, F4, or F5) or is a pre-A0 module the refactor left in place.
+redesign (issue #1), not only what A0 built. Everything in the map below is
+already in the tree, built by A0, F0, F1, F2, F3, F4, F5, or F6, or is a
+pre-A0 module the refactor left in place.
 
 ## Layers and the dependency rule
 
@@ -60,7 +59,7 @@ hive_cli/
   layout/  model.py tabs.py keybinds.py resolve.py bundled/*.kdl   neutral tab/pane model, bundled tab definitions, keybind spec
   mux/     base.py       Mux protocol + PaneInfo/TabInfo; get_mux()
            zellij/       backend.py (CLI calls), kdl.py (render TabSpec/SessionSpec), keybinds.py (render keybind block)
-           tmux/         backend.py, conf.py, control.py (control-mode parser)                       [F6]
+           tmux/         backend.py (TmuxMux + bootstrap), conf.py (render tmux.conf), control.py (control-mode client/parser)
   services/ worktrees.py provision/remove (git + files + post_create + handoff symlink)
             pane.py      run_loop(pick, launch, restart): state server + agent child lifecycle
             restart.py   RestartFloor: backoff after fast exits (shared by run/zellij --restart)
@@ -82,7 +81,7 @@ hive_cli/
            tui/          Textual control plane: app.py (ControlPlaneApp), screens.py, model.py (build_rows), control_plane.tcss
   commands/ run.py zellij.py wt.py status.py task.py handoff.py diff.py rebase.py merge.py config_cmd.py completion.py doctor.py
             pane.py tab.py
-            session.py                                                                             [F6]
+            session.py     hive session: backend-neutral hive zellij, picks Zellij/tmux the way get_mux() does
   hooks/   entry.py templates.py    hive-hook: entry.main() maps an agent hook payload to a pane status via templates.status_for()
 ```
 
@@ -203,6 +202,15 @@ loop + `to_thread` workers; everything else is single-threaded and
 synchronous. A piece of state has exactly one owning process; everyone else
 reads it over the socket.
 
+Under tmux (F6), `services/watch.py` additionally owns one long-lived
+`asyncio.create_subprocess_exec` child per watched session:
+`mux/tmux/control.py:tmux_control_events` streams `tmux -C attach-session`'s
+notification lines for as long as the control plane is open. This is a third
+exception to rule 6 ("every external command goes through `core.proc.run`"),
+alongside agent launches and `execvpe` hand-offs: `core.proc.run` captures a
+bounded, waited command and returns a `Result`, which doesn't fit a streaming
+client with no end and no single return value.
+
 ### Extension checklists
 
 - **New command**: `commands/<x>.py` (cyclopts app, ≤ ~40 lines per command
@@ -239,7 +247,7 @@ for sockets), `fake_proc` (records and scripts `core.proc.run`), `temp_git_repo`
 (exists), `FakeMux` (F0), `pane_server` (F0). Every test file runs in CI with
 no zellij, tmux, gh or network.
 
-## A0/F0/F1/F2/F3/F4/F5 status and divergences from this doc
+## A0/F0/F1/F2/F3/F4/F5/F6 status and divergences from this doc
 
 A0 (issue #1, done 2026-09-05) built the layering and dependency rule above
 and moved the codebase into it. F0 (done 2026-09-06) added the pane state
@@ -301,9 +309,28 @@ write via `state.client.set_fields`, always exits 0); `HooksConfig`
 existing skip-permissions/extra_args/extra-dirs injection sites (see F5
 divergences for why there's no single `build_command`); and
 `agents/profiles.py:ensure_gemini_hooks()`, merged into a hive-managed
-profile's `.gemini/settings.json` only for a named profile. Still missing is
-the `[F6]` entry and `core/models.py` (see the F2 divergences below for why
-it didn't materialize as a separate file).
+profile's `.gemini/settings.json` only for a named profile. `core/models.py`
+is still missing (see the F2 divergences below for why it didn't materialize
+as a separate file).
+
+F6 (done 2026-09-09) added the tmux multiplexer backend alongside Zellij, so
+the same hive workflow — agent panes, on-demand tabs/panes, floating shells,
+the control-plane toggle, live control-plane updates — works under tmux with
+no test needing a real tmux/zellij binary: `mux/tmux/conf.py` (`render_conf`/
+`tmux_key`, golden-tested against the F6 spec's own example),
+`mux/tmux/control.py` (`tmux_control_events`, `LAYOUT_EVENTS`), `mux/tmux/
+backend.py` (`TmuxMux`, the full `Mux` protocol plus tmux-only `bootstrap`/
+`apply_tab`), `config/schema.py:MuxConfig` (`mux.backend: auto | zellij |
+tmux`, env `HIVE_MUX_BACKEND`), `mux.get_mux()`'s three-way backend
+selection (config/env choice, then `$ZELLIJ`, then `$TMUX`),
+`services/session.py:prepare_tmux_attach()` (renders the session's
+`tmux.conf` under `layouts_dir()` and returns an idempotent `ensure_session`
+closure), `services/session.py:start()` calling that closure before every
+attach and every `--restart` iteration, `services/watch.py`'s tmux path
+(control-mode events drive a 200 ms debounced refresh instead of Zellij's
+3 s poll, alongside the same socket-scan loop that discovers new pane
+sockets either way), and `commands/session.py` (`hive session`: the
+backend-neutral counterpart to `hive zellij`).
 
 F1 divergences from the package map and the F1 spec, all deliberate:
 
@@ -354,12 +381,17 @@ as-is rather than a new use of `subprocess`:
 - `git/analysis.py` — the `git … | delta` pipe is streamed straight to the
   terminal for interactive diff paging, not captured.
 
-`commands/session.py` is also pre-listed in `SUBPROCESS_OK`; the file itself
-is `[F6]` work (a tmux-specific command surface) and doesn't exist yet — F3
-added `commands/pane.py`/`commands/tab.py` instead, per its own spec, and
-neither needs `subprocess` directly (they go through `services/session.py`
-and the `Mux` protocol). `mux/zellij/backend.py` is listed too but no longer
-imports `subprocess` (every call goes through `proc.run`).
+`commands/session.py` (F6's `hive session`, the backend-neutral counterpart
+to `hive zellij`) and `mux/tmux/backend.py` were pre-listed in
+`SUBPROCESS_OK` ahead of F6 landing; neither ended up needing `subprocess`
+directly (they go through `services/session.py`/`core.proc.run` and the
+`Mux` protocol like everything else), so the listing is now the same kind of
+harmless over-inclusion as `mux/zellij/backend.py`, which is listed too but
+no longer imports `subprocess` (every call goes through `proc.run`).
+`mux/tmux/control.py`'s `tmux_control_events` is a different case: it calls
+`asyncio.create_subprocess_exec` directly, not `subprocess`, so
+`SUBPROCESS_OK`'s AST check never sees it — see "F6 divergences" for why
+that call is exempt from rule 6 rather than an oversight.
 
 F0 divergences from the package map and the F0 spec, all deliberate:
 
@@ -565,3 +597,77 @@ F5 divergences from the F5 spec, all deliberate:
   names match the spec exactly (checked against geminicli.com/docs/hooks on
   2026-09-09); `gemini_settings()` and `ensure_gemini_hooks()` ship
   unchanged from the spec's shapes.
+
+F6 divergences from the F6 spec, all deliberate:
+
+- **`TmuxMux.list_panes`/`list_tabs` scope to `own_session()` instead of the
+  spec's `-a` (all sessions on the server).** The private tmux server
+  (`-L hive`) is shared across every repo/branch running under tmux, so `-a`
+  would leak other repos' panes and tabs into this session's status/control
+  plane. Falls back to `-a` only when `own_session()` can't be determined
+  (not inside a tmux pane, e.g. `hive status` run from a plain shell).
+- **`-f <conf>` is passed on every call from a conf-bearing `TmuxMux`
+  instance, not just at `bootstrap`.** tmux only honors `-f` on the command
+  that first creates a not-yet-running server for that socket name; rather
+  than track "is this the first call," `prepare_tmux_attach`'s bootstrap
+  `TmuxMux` (constructed with `conf=`) just always includes it. Harmless
+  once the server exists (tmux ignores `-f` after that point) and closes a
+  real bug: without it, whichever tmux subcommand happened to run first
+  loaded the user's real `~/.tmux.conf`/`~/.config/tmux/tmux.conf` instead
+  of hive's rendered one.
+- **`LAYOUT_EVENTS` includes `unlinked-window-close`.** Verified empirically
+  against a throwaway `-L` server: tmux emits `%unlinked-window-close`
+  instead of `%window-close` for a window that belongs to only one session
+  (true of every hive tab, since tabs are per-session windows, not linked
+  across sessions) — the spec's event list only named `window-close`, which
+  never actually fires for hive's layout.
+- **`TmuxMux.current_tab_id()` is not in the spec's method table.** Required
+  for `Mux` protocol conformance; mirrors `ZellijMux`'s own-pane-first-else-
+  focused-pane fallback, which matters because a `run-shell` keybind's
+  `$TMUX_PANE` is unset (verified: `run-shell` inherits `$TMUX` but not
+  `$TMUX_PANE`), so `own_pane_id()` returns `None` for every on-demand
+  keybind action and the code falls through to the focused pane instead —
+  i.e. M-a splits into whichever pane is currently focused, not literally
+  "this" pane.
+- **Suspended-pane detection keys on `title.startswith("hold:")` alone**,
+  not a `pane_current_command == "hive"` check the spec implied alongside
+  it: `pane_current_command` reports the running interpreter (`python3.14`),
+  never the literal string `"hive"`, so that half of the check could never
+  match anything.
+- **`layout/tabs.py`'s `_teams_tab`/`tool_tab`/`resolve_tab`, and
+  `services/session.py:open_tab`, gained a `backend` parameter.** tmux has
+  no native start-suspended pane, so every other suspended pane already
+  routes through `hive pane hold --`; the Teams tab is the one tab whose
+  command differs structurally by backend, running
+  `claude --teammate-mode tmux` directly instead of wrapping it in `hold`.
+- **`TmuxMux.bootstrap(self, spec)` takes one argument, not the spec's
+  `bootstrap(spec, conf)` two-argument table entry.** `conf` is set once at
+  `__init__` (the same instance also serves `list_panes`/`new_pane`/etc. for
+  the rest of the attach), so threading it through `bootstrap` again would
+  just restate constructor state.
+- **`hive zellij layout-path` is not made tmux-aware.** The spec mentioned
+  it printing the rendered conf path under tmux; deferred as out of scope —
+  `hive session` doesn't need an equivalent introspection command yet, and
+  `hive zellij` staying Zellij-only (as its name says) is simpler than
+  overloading it with backend switching.
+- **`hive zellij set-status`/`set-title` and `hive pane set-status`/
+  `set-title` stay Zellij-only** (`mux/zellij/backend.py`'s `_set` gates on
+  `rt.in_zellij`); under tmux they return `False` and print "Not running in
+  Zellij session." Not a bug: F5's hook-driven status update path
+  (`hive-hook` → pane socket → `PaneState`) is mux-neutral already, so the
+  only thing lost under tmux is the direct CLI/keybind-driven title-segment
+  helpers, which the F6 spec never asked to be ported.
+- **`hive pane hold` sets the pane's title to `"hold: {command}"`** via
+  `mux.rename_pane` before waiting on Enter — needed for `TmuxMux.list_panes`'s
+  `title.startswith("hold:")` check to ever see a real suspended pane; the
+  spec's `session.hold()` shape didn't include this, so it lives in the
+  `commands/pane.py` adapter instead (services stay print/input-free, and
+  `session.hold` has no `Mux` to call `rename_pane` on).
+
+Not yet done, and not attempted this pass: an end-to-end manual check of
+`HIVE_MUX_BACKEND=tmux hive session` in a real terminal (attach, all four
+on-demand keybinds, the control-plane toggle, live control-plane updates
+across a real control-mode stream, the Teams tab). Everything above was
+verified either by the test suite (`fake_proc`/`FakeMux`, no real tmux/zellij
+binary needed) or by hand against a throwaway `-L <name>` private tmux
+server, killed immediately after each check.

@@ -184,6 +184,51 @@ hive zellij layout-path agent-16     # the old 16-pane session file
 zellij --layout (hive zellij layout-path)   # fish
 ```
 
+### `hive session` and the tmux backend
+
+`hive session` is the backend-neutral counterpart to `hive zellij`: it picks
+Zellij or tmux the same way `get_mux()` does everywhere else — `mux.backend`
+in config, `HIVE_MUX_BACKEND`, or the multiplexer the process is already
+inside — falling back to Zellij when none of those apply and nothing is
+running yet (the same "starting fresh" experience `hive zellij` has always
+had, since `mux.backend: auto` alone can't tell you which multiplexer to
+*start*).
+
+```bash
+hive session                          # Auto-detect agent and backend
+HIVE_MUX_BACKEND=tmux hive session    # Force the tmux backend
+```
+
+```yaml
+mux:
+  backend: tmux # auto (default) | zellij | tmux
+```
+
+Enabling tmux gets you the same workflow as Zellij — agent panes, on-demand
+tabs/panes, a floating shell, the control-plane toggle, live control-plane
+updates — on a private tmux server (`tmux -L hive`) that never touches your
+own `~/.tmux.conf`. Differences worth knowing:
+
+| Need | Zellij | tmux |
+|---|---|---|
+| Create window/pane in a dir with a command | `new-tab -c`, `new-pane --cwd` | `new-window -c -n`, `split-window -h -c` |
+| Floating shell / control-plane toggle | floating panes (persistent, movable) | `display-popup` (**modal** — closes when the command inside it exits) |
+| Discover panes/tabs | `list-panes --json` (polled every 3s) | `list-panes` once, then pushed via control mode |
+| Push events | none from the CLI (plugin only) | **control mode** (`tmux -C attach-session`) streams window-add/close/rename/layout-change |
+| Own-pane identity | `$ZELLIJ_PANE_ID`, `$ZELLIJ_SESSION_NAME` | `$TMUX_PANE`, `tmux display -p '#S'` |
+| Start-suspended pane | native | emulated: `hive pane hold -- CMD` waits for Enter, then execs |
+
+Only `zellij.layout: "agent"` is supported under tmux (`agent-16` is a
+static Zellij layout file with no tmux equivalent). The Teams tab runs
+`claude --teammate-mode tmux` directly instead of wrapping it in a suspended
+`hold` pane. `hive zellij` itself — including `set-status`/`set-title` and
+`layout-path` — stays Zellij-only; under tmux, `hive pane set-status`/
+`set-title` are no-ops (agent status still updates via hooks regardless of
+backend — only the direct CLI/keybind-driven title helpers are Zellij-only).
+A `run-shell` keybind (`Alt a`, etc.) inherits tmux's session but not
+`$TMUX_PANE`, so on-demand panes/tabs split relative to whichever pane is
+currently focused, not literally "the pane the key was pressed in."
+
 ### `hive wt`
 
 Manage git worktrees for multi-agent development.
@@ -645,6 +690,15 @@ Each item can be:
     if_exists: "pnpm-lock.yaml"
   ```
 
+#### `mux.backend`
+
+- **Type:** `"auto" | "zellij" | "tmux"`
+- **Default:** `"auto"` (`get_mux()` picks Zellij inside a Zellij session,
+  tmux inside a tmux session, else `None`)
+- **Description:** Which multiplexer `hive session` (and everything that
+  calls `get_mux()`) uses. See [`hive session` and the tmux
+  backend](#hive-session-and-the-tmux-backend).
+
 #### `zellij.layout`
 
 - **Type:** `string` (optional)
@@ -786,7 +840,7 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
 | `HIVE_GITHUB_ISSUE_LIMIT`         | integer | Max issues to fetch                            |
 | `HIVE_HOOKS_ENABLED`              | boolean | Wire agent lifecycle hooks to the pane's status |
-| `HIVE_MUX_BACKEND`                | string  | Multiplexer backend (`zellij`) instead of auto-detection |
+| `HIVE_MUX_BACKEND`                | `auto`\|`zellij`\|`tmux` | Multiplexer backend, overriding `mux.backend` |
 | `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
 | `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels` when self-assigned |
 | `HIVE_PANE_SOCK`                  | path    | Pane-state socket served by this pane's `hive run` (exported to the agent) |

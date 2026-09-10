@@ -17,6 +17,7 @@ Environment Variables:
     HIVE_WORKTREES_RESUME     - Resume default for worktrees (true/false)
     HIVE_ZELLIJ_LAYOUT        - Zellij layout name
     HIVE_ZELLIJ_SESSION_NAME  - Session name template
+    HIVE_MUX_BACKEND          - Multiplexer backend ('auto', 'zellij', 'tmux')
     HIVE_GITHUB_FETCH_ISSUES  - Fetch GitHub issues (true/false)
     HIVE_GITHUB_ISSUE_LIMIT   - Max issues to fetch (integer)
 
