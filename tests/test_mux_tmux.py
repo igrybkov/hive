@@ -213,8 +213,8 @@ def test_list_panes_parses_format(monkeypatch, fake_proc):
     # #{pane_current_command} (verified on this machine: "python3.14") --
     # suspended detection must key on the "hold: " title alone.
     stdout = (
-        "%0\t@0\tIllia\tbash\t/repo\t1\t0\n"
-        "%1\t@0\thold: claude\tpython3.14\t/repo\t0\t0\n"
+        "%0\t@0\tIllia\tbash\t/repo\t1\t1\t0\n"
+        "%1\t@0\thold: claude\tpython3.14\t/repo\t0\t1\t0\n"
     )
     fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout=stdout)
     panes = TmuxMux().list_panes()
@@ -229,6 +229,21 @@ def test_list_panes_parses_format(monkeypatch, fake_proc):
     assert fake_proc.calls[-1][:5] == ["tmux", "-L", "hive", "list-panes", "-a"]
 
 
+def test_list_panes_focused_requires_window_active_too(fake_proc):
+    # `#{pane_active}` alone is 1 for the active pane of *every* window, not
+    # just the one currently in view (verified empirically against a
+    # two-window session): a background window's active pane must not count
+    # as focused, or a run-shell keybind (no $TMUX_PANE, see
+    # current_tab_id's fallback below) would target the wrong window.
+    stdout = (
+        "%0\t@0\tIllia\tbash\t/repo\t1\t0\t0\n%1\t@1\tIllia\tbash\t/repo\t1\t1\t0\n"
+    )
+    fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout=stdout)
+    panes = TmuxMux().list_panes()
+    assert panes[0].focused is False
+    assert panes[1].focused is True
+
+
 def test_list_panes_scopes_to_own_session(monkeypatch, fake_proc):
     monkeypatch.setenv("TMUX", "/tmp/tmux-501/hive,123,0")
     fake_proc.script(("tmux", "-L", "hive", "display"), stdout="myrepo\n")
@@ -236,6 +251,34 @@ def test_list_panes_scopes_to_own_session(monkeypatch, fake_proc):
     TmuxMux().list_panes()
     call = next(c for c in fake_proc.calls if c[3] == "list-panes")
     assert call[:8] == ["tmux", "-L", "hive", "list-panes", "-s", "-t", "myrepo", "-F"]
+
+
+def test_current_tab_id_from_own_pane(monkeypatch, fake_proc):
+    monkeypatch.setenv("TMUX_PANE", "%1")
+    stdout = (
+        "%0\t@0\tIllia\tbash\t/repo\t1\t0\t0\n%1\t@1\tIllia\tbash\t/repo\t1\t1\t0\n"
+    )
+    fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout=stdout)
+    assert TmuxMux().current_tab_id() == "@1"
+
+
+def test_current_tab_id_falls_back_to_focused_pane(monkeypatch, fake_proc):
+    # No $TMUX_PANE (a run-shell keybind, verified empirically: run-shell
+    # inherits $TMUX but not $TMUX_PANE) falls back to the focused pane --
+    # which requires window_active, not just pane_active, to pick the right
+    # window out of several (see test_list_panes_focused_requires_window_active_too).
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    stdout = (
+        "%0\t@0\tIllia\tbash\t/repo\t1\t0\t0\n%1\t@1\tIllia\tbash\t/repo\t1\t1\t0\n"
+    )
+    fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout=stdout)
+    assert TmuxMux().current_tab_id() == "@1"
+
+
+def test_current_tab_id_none_when_nothing_answers(monkeypatch, fake_proc):
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    fake_proc.script(("tmux", "-L", "hive", "list-panes"), stdout="")
+    assert TmuxMux().current_tab_id() is None
 
 
 def test_focus_pane_selects_window_then_pane(fake_proc):

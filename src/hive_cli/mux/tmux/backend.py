@@ -38,6 +38,7 @@ _PANE_FORMAT = "\t".join(
         "#{pane_current_command}",
         "#{pane_current_path}",
         "#{pane_active}",
+        "#{window_active}",
         "#{pane_dead}",
     )
 )
@@ -45,16 +46,19 @@ _WINDOW_FORMAT = "\t".join(("#{window_id}", "#{window_name}", "#{window_active}"
 
 
 def _pane_info(fields: list[str]) -> PaneInfo | None:
-    if len(fields) != 7:
+    if len(fields) != 8:
         return None
-    pid, wid, title, command, cwd, active, dead = fields
+    pid, wid, title, command, cwd, pane_active, window_active, dead = fields
     return PaneInfo(
         id=pid,
         tab_id=wid,
         title=title,
         command=command,
         cwd=cwd,
-        focused=active == "1",
+        # `pane_active` alone is 1 for the active pane of *every* window, not
+        # just the one the user is looking at (verified: a two-window session
+        # lists two `pane_active=1` rows) -- true focus needs both.
+        focused=pane_active == "1" and window_active == "1",
         exited=dead == "1",
         # Not `command == "hive"` (F6-tmux.md's own literal wording): a
         # `uv tool install`ed hive reports its interpreter as

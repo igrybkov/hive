@@ -213,7 +213,7 @@ own `~/.tmux.conf`. Differences worth knowing:
 |---|---|---|
 | Create window/pane in a dir with a command | `new-tab -c`, `new-pane --cwd` | `new-window -c -n`, `split-window -h -c` |
 | Floating shell / control-plane toggle | floating panes (persistent, movable) | `display-popup` (**modal** — closes when the command inside it exits) |
-| Discover panes/tabs | `list-panes --json` (polled every 3s) | `list-panes` once, then pushed via control mode |
+| Discover panes/tabs | `list-panes --json` (polled every 3s) | `list-panes`, re-run on each debounced control-mode layout event |
 | Push events | none from the CLI (plugin only) | **control mode** (`tmux -C attach-session`) streams window-add/close/rename/layout-change |
 | Own-pane identity | `$ZELLIJ_PANE_ID`, `$ZELLIJ_SESSION_NAME` | `$TMUX_PANE`, `tmux display -p '#S'` |
 | Start-suspended pane | native | emulated: `hive pane hold -- CMD` waits for Enter, then execs |
