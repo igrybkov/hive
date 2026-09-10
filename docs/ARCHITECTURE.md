@@ -629,6 +629,12 @@ F6 divergences from the F6 spec, all deliberate:
   keybind action and the code falls through to the focused pane instead —
   i.e. M-a splits into whichever pane is currently focused, not literally
   "this" pane.
+- **`PaneInfo.focused` requires `#{window_active}` in addition to
+  `#{pane_active}`.** `#{pane_active}` alone is `1` for the active pane of
+  *every* window, not just the one in view (verified empirically: a
+  two-window session lists two `pane_active=1` rows), which would have made
+  `current_tab_id()`'s focused-pane fallback above pick whichever window
+  `list-panes` lists first rather than the one actually in view.
 - **Suspended-pane detection keys on `title.startswith("hold:")` alone**,
   not a `pane_current_command == "hive"` check the spec implied alongside
   it: `pane_current_command` reports the running interpreter (`python3.14`),
