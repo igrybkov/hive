@@ -19,6 +19,14 @@ class PaneSpec:
     suspended: bool = False  # zellij start_suspended
     env: tuple[tuple[str, str], ...] = ()  # rendered as /usr/bin/env K=V … argv
     close_on_exit: bool = False
+    # A non-empty `children` makes this a *container*, not a leaf: `name`,
+    # `command`, `cwd`, `suspended`, `env` and `close_on_exit` are ignored,
+    # and `direction` says how its children split from each other (`size`
+    # still applies -- it's how much of *this spec's own* parent container
+    # it takes). Used by agents_tab's control="right" to nest the "hive"
+    # status pane under the last agent pane instead of beside it.
+    children: tuple[PaneSpec, ...] = ()
+    direction: str = "vertical"
 
 
 @dataclass(frozen=True)

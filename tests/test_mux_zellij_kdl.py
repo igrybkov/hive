@@ -18,6 +18,12 @@ from hive_cli.mux.zellij.kdl import (
 # agent.kdl). Per the spec's own escape hatch ("copy the default_tab_template
 # block from the current agent.kdl verbatim if it differs from the above"),
 # this test uses the bare form.
+#
+# Also post-dates the F2 spec's own golden block: control="right" now nests
+# "hive" under the *last* agent pane's column (`pane split_direction=
+# "horizontal" { c2 hive }`) instead of giving it a separate 30%-wide
+# top-level column -- a later design change (PaneSpec.children), not a
+# transcription slip from the spec.
 SESSION_GOLDEN = (
     "\n".join(
         [
@@ -38,15 +44,17 @@ SESSION_GOLDEN = (
             '                args "HIVE_PANE_ID=1" "HIVE_PANE_LABEL=Anton" '
             '"/opt/hive" "run" "--restart"',
             "            }",
-            '            pane name="c2: Bohdan" {',
-            '                command "/usr/bin/env"',
-            '                args "HIVE_PANE_ID=2" "HIVE_PANE_LABEL=Bohdan" '
+            '            pane split_direction="horizontal" {',
+            '                pane name="c2: Bohdan" {',
+            '                    command "/usr/bin/env"',
+            '                    args "HIVE_PANE_ID=2" "HIVE_PANE_LABEL=Bohdan" '
             '"/opt/hive" "run" "--restart"',
-            "                start_suspended true",
-            "            }",
-            '            pane name="hive" size="30%" {',
-            '                command "/opt/hive"',
-            '                args "status" "--watch" "--compact"',
+            "                    start_suspended true",
+            "                }",
+            '                pane name="hive" size="8" {',
+            '                    command "/opt/hive"',
+            '                    args "status" "--watch" "--compact"',
+            "                }",
             "            }",
             "        }",
             "    }",
@@ -154,3 +162,34 @@ def test_no_keybinds_block_when_empty():
     session = SessionSpec(name="s", tabs=(), keybinds=KeybindSpec())
     out = render_session_file(session, "/opt/hive")
     assert "keybinds" not in out
+
+
+def test_render_pane_nested_container():
+    """A `children`-bearing PaneSpec renders as a nested split container:
+    no `name` attribute (Zellij pane names are for leaves), `split_direction`
+    from its own `direction`, `size` from its own `size` -- and each child
+    indented one level deeper, recursively."""
+    container = PaneSpec(
+        name="",
+        command=(),
+        size="40%",
+        direction="horizontal",
+        children=(
+            PaneSpec(name="top", command=("true",)),
+            PaneSpec(name="bottom", command=("false",)),
+        ),
+    )
+    out = render_pane(container, indent=1)
+    assert out == "\n".join(
+        [
+            '    pane split_direction="horizontal" size="40%" {',
+            '        pane name="top" {',
+            '            command "true"',
+            "        }",
+            '        pane name="bottom" {',
+            '            command "false"',
+            "        }",
+            "    }",
+        ]
+    )
+    assert 'name=""' not in out

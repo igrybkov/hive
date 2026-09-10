@@ -11,6 +11,7 @@ entirely via `execvpe` -- there is no captured output to return, matching
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -193,22 +194,106 @@ def _mux(mux: Mux | None) -> Mux:
     return resolved
 
 
-def _taken_pane_ids(session: str) -> list[int]:
-    return [s.hive_pane_id for s in client.list_states(paths.session_sock_dir(session))]
+_PANE_TITLE_ID_RE = re.compile(r"^(?:hold: )?c(\d+)(?::|$)")
 
 
-def agent_panes_in_tab(mux: Mux, tab_id: str, session: str) -> list[PaneInfo]:
-    """Panes of the tab that have a live hive socket (client.list_states)."""
-    live_ids = {s.pane_id for s in client.list_states(paths.session_sock_dir(session))}
-    return [p for p in mux.list_panes() if p.tab_id == tab_id and p.id in live_ids]
+def _pane_hive_id(title: str) -> int | None:
+    """Parse the `HIVE_PANE_ID` a layout pane was given from its `cN[: label]`
+    title (agents_tab names panes this way before `hive run` ever starts and
+    registers a socket -- a `start_suspended` pane has no live state yet).
+    The optional `"hold: "` prefix matches the tmux backend's suspended-pane
+    title (`commands/pane.py:hold`'s `_hold_identity`), which carries the
+    same `cN[: label]` identity behind that marker instead of in front of it."""
+    m = _PANE_TITLE_ID_RE.match(title)
+    return int(m.group(1)) if m else None
 
 
-def current_tab_id(mux: Mux) -> str | None:
+def _live_pane_ids(session: str) -> set[str]:
+    return {s.pane_id for s in client.list_states(paths.session_sock_dir(session))}
+
+
+def _taken_pane_ids(panes: list[PaneInfo], session: str) -> list[int]:
+    live = [s.hive_pane_id for s in client.list_states(paths.session_sock_dir(session))]
+    from_titles = [id_ for p in panes if (id_ := _pane_hive_id(p.title)) is not None]
+    return live + from_titles
+
+
+def agent_panes_in_tab(
+    panes: list[PaneInfo], tab_id: str, session: str
+) -> list[PaneInfo]:
+    """Panes of the tab that are agent panes: a live hive socket, or a
+    not-yet-started pane still carrying its layout-assigned `cN[: label]`
+    title. Without the title check, a `start_suspended` pane from the
+    initial agents_tab (never `hive run`, so no socket yet) is invisible
+    here -- `new_agent_pane` would then split a duplicate pane into the tab
+    and hand it the same HIVE_PANE_ID the suspended pane is already using."""
+    live_ids = _live_pane_ids(session)
+    return [
+        p
+        for p in panes
+        if p.tab_id == tab_id
+        and (p.id in live_ids or _pane_hive_id(p.title) is not None)
+    ]
+
+
+def current_tab_id(mux: Mux, panes: list[PaneInfo] | None = None) -> str | None:
     """`mux.current_tab_id()`, falling back to the focused pane's tab_id."""
     tab_id = mux.current_tab_id()
     if tab_id:
         return tab_id
-    return next((p.tab_id for p in mux.list_panes() if p.focused), None)
+    panes = panes if panes is not None else mux.list_panes()
+    return next((p.tab_id for p in panes if p.focused), None)
+
+
+def _reuse_idle_pane(
+    mux: Mux, existing: list[PaneInfo], session: str, *, focus: bool
+) -> str | None:
+    """Focus and return an existing-but-never-started agent pane's id, or
+    None when every pane in `existing` already has a live hive socket."""
+    live_ids = _live_pane_ids(session)
+    idle = next((p for p in existing if p.id not in live_ids), None)
+    if idle is None:
+        return None
+    if focus:
+        mux.focus_pane(idle.id)
+    return idle.id
+
+
+def _refocus_before_split(
+    mux: Mux, panes: list[PaneInfo], existing: list[PaneInfo], target_tab: str
+) -> None:
+    """Move focus onto the last agent pane before splitting a new one in,
+    when the tab's active pane is something else (e.g. the control-plane
+    pane) -- otherwise Zellij's `new-pane --direction right` splits *that*
+    pane instead of the agents."""
+    if not existing:
+        return
+    existing_ids = {p.id for p in existing}
+    focused = next((p for p in panes if p.focused and p.tab_id == target_tab), None)
+    if focused is not None and focused.id not in existing_ids:
+        mux.focus_pane(existing[-1].id)
+
+
+def _agent_argv(
+    hive: str,
+    number: int,
+    label: str,
+    *,
+    agent: str | None,
+    profile: str | None,
+    branch: str | None,
+) -> list[str]:
+    argv = ["/usr/bin/env", f"HIVE_PANE_ID={number}"]
+    if label:
+        argv.append(f"HIVE_PANE_LABEL={label}")
+    argv += [hive, "run", "--restart"]
+    if agent:
+        argv += ["-a", agent]
+    if profile:
+        argv += ["-p", profile]
+    if branch:
+        argv += ["-w", branch]
+    return argv
 
 
 @registry.op("session.new_agent_pane")
@@ -222,31 +307,41 @@ def new_agent_pane(
     focus: bool = True,
     settings: HiveSettings | None = None,
 ) -> str:
-    """Split a new agent pane into the target tab, or open a new agents tab.
+    """Reuse an idle agent slot, split a new pane into the target tab, or
+    open a new agents tab.
 
-    Fewer than `settings.zellij.agents_per_tab` live agent panes in the
-    target tab -> split right into it; otherwise a fresh one-pane agents tab.
+    An explicit agent/profile/branch always creates a fresh pane -- an idle
+    slot's command is fixed at layout time and can't take overrides.
+    Otherwise, a pane already present in the target tab but never started
+    (agents_tab's `start_suspended` slot, matched by `agent_panes_in_tab`
+    even with no live socket yet) is focused and reused instead of
+    duplicated (`_reuse_idle_pane`). Failing that: fewer than
+    `settings.zellij.agents_per_tab` agent panes in the target tab -> split
+    right of the *last agent pane* (`_refocus_before_split` guards against
+    splitting whatever else happens to be focused there, e.g. the
+    control-plane pane); otherwise a fresh one-pane agents tab.
     """
     mux = _mux(mux)
     settings = settings or get_settings()
     session = mux.own_session() or ""
-    target_tab = tab_id or current_tab_id(mux) or ""
-    existing = agent_panes_in_tab(mux, target_tab, session) if target_tab else []
+    panes = mux.list_panes()
+    target_tab = tab_id or current_tab_id(mux, panes) or ""
+    existing = agent_panes_in_tab(panes, target_tab, session) if target_tab else []
+
+    if not (agent or profile or branch):
+        idle_id = _reuse_idle_pane(mux, existing, session, focus=focus)
+        if idle_id is not None:
+            return idle_id
+
     hive = paths.hive_executable()
-    number = next_free_pane_id(_taken_pane_ids(session))
+    number = next_free_pane_id(_taken_pane_ids(panes, session))
     label = label_for(number, settings.zellij.pane_labels)
 
     if len(existing) < settings.zellij.agents_per_tab:
-        argv = ["/usr/bin/env", f"HIVE_PANE_ID={number}"]
-        if label:
-            argv.append(f"HIVE_PANE_LABEL={label}")
-        argv += [hive, "run", "--restart"]
-        if agent:
-            argv += ["-a", agent]
-        if profile:
-            argv += ["-p", profile]
-        if branch:
-            argv += ["-w", branch]
+        _refocus_before_split(mux, panes, existing, target_tab)
+        argv = _agent_argv(
+            hive, number, label, agent=agent, profile=profile, branch=branch
+        )
         result = mux.new_pane(
             argv, direction="right", tab_id=target_tab or None, focus=focus
         )
@@ -273,7 +368,7 @@ def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
     hive = paths.hive_executable()
     if name == AGENTS_TAB:
         session = mux.own_session() or ""
-        first_id = next_free_pane_id(_taken_pane_ids(session))
+        first_id = next_free_pane_id(_taken_pane_ids(mux.list_panes(), session))
         n = settings.zellij.agents_per_tab
         labels = [
             label_for(first_id + i, settings.zellij.pane_labels) for i in range(n)

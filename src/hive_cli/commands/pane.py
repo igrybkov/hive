@@ -10,6 +10,7 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
+from ..config import get_runtime_settings
 from ..core import paths
 from ..core.errors import HiveError
 from ..git import get_main_repo, get_worktree_path, list_worktrees
@@ -217,8 +218,24 @@ def hold(
     mux = get_mux()
     pane_id = mux.own_pane_id() if mux else None
     if mux and pane_id:
-        mux.rename_pane(pane_id, f"hold: {' '.join(command)}")
+        mux.rename_pane(pane_id, f"hold: {_hold_identity(command)}")
     session.hold(list(command), prompt=prompt, wait=_wait_for_enter)
+
+
+def _hold_identity(command: tuple[str, ...]) -> str:
+    """The text after tmux's `"hold: "` title prefix: `cN[: label]` when this
+    pane came from `agents_tab` (its `HIVE_PANE_ID`/`HIVE_PANE_LABEL` are set
+    in the process env by the `/usr/bin/env` wrapper `_pane_argv` puts
+    outside `hive pane hold`, since the trailing COMMAND itself never carries
+    them), else the joined command as before -- matching Zellij, whose
+    layout-assigned `cN: label` pane title is visible on a held pane without
+    any hive code involved, so tmux's own hold title needs the same identity
+    for `services/session.py`'s `_pane_hive_id` to recognize either backend's
+    not-yet-started agent pane."""
+    rt = get_runtime_settings()
+    if not rt.pane_id:
+        return " ".join(command)
+    return f"c{rt.pane_id}: {rt.pane_label}" if rt.pane_label else f"c{rt.pane_id}"
 
 
 @pane_app.command(name="set-status")

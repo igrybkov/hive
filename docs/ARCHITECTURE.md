@@ -668,7 +668,10 @@ F6 divergences from the F6 spec, all deliberate:
   `title.startswith("hold:")` check to ever see a real suspended pane; the
   spec's `session.hold()` shape didn't include this, so it lives in the
   `commands/pane.py` adapter instead (services stay print/input-free, and
-  `session.hold` has no `Mux` to call `rename_pane` on).
+  `session.hold` has no `Mux` to call `rename_pane` on). Updated post-F6 (see
+  "Post-F6 fixes" below): when `HIVE_PANE_ID` is in the process env, the
+  title becomes `"hold: cN[: label]"` instead of `"hold: {command}"`, so an
+  agent pane's identity survives being held under either backend.
 
 Not yet done, and not attempted this pass: an end-to-end manual check of
 `HIVE_MUX_BACKEND=tmux hive session` in a real terminal (attach, all four
@@ -677,3 +680,54 @@ across a real control-mode stream, the Teams tab). Everything above was
 verified either by the test suite (`fake_proc`/`FakeMux`, no real tmux/zellij
 binary needed) or by hand against a throwaway `-L <name>` private tmux
 server, killed immediately after each check.
+
+## Post-F6 fixes (2026-09-09)
+
+Found by dogfooding the real `agent` layout in a live Zellij session
+(screenshot: two "c2: Bohdan" panes and a stray tab), not by the test suite —
+`agent_panes_in_tab`/`_taken_pane_ids` only ever saw panes with a live hive
+socket, so a `start_suspended` agent pane that was never actually started
+(the normal steady state for every agent pane beyond the first) was invisible
+to `new_agent_pane`. All four fixes are in `services/session.py` unless noted:
+
+- **`_pane_hive_id(title)`** parses the `cN[: label]` identity out of a
+  pane's title, matching either backend: Zellij's layout-assigned title
+  (present from the moment the layout renders, before `hive run` ever
+  starts) or tmux's `"hold: cN[: label]"` (see the F6 divergence above).
+  `agent_panes_in_tab` and `_taken_pane_ids` now count a pane if it has a
+  live socket *or* this title match — closing the gap that let
+  `new_agent_pane` split a duplicate pane into an already-full tab and hand
+  it an already-taken `HIVE_PANE_ID`.
+- **`new_agent_pane` reuses an idle (present-but-never-started) agent pane**
+  instead of creating a new one, when no `-a`/`-p`/`-w` override is given (an
+  idle slot's command is fixed at layout time and can't take one). This is
+  *focus-only* — same as every other `start_suspended` pane in this design,
+  it still needs Enter pressed inside it; there's no `Mux.send_keys`/
+  `write-chars` method to automate that, and adding one wasn't part of this
+  fix.
+- **`new_agent_pane` refocuses the last agent pane before splitting** when
+  the tab's currently-focused pane is something else in the same tab (e.g.
+  the "hive" control-plane pane, which is exactly what's focused when the
+  "New agent" keybind is pressed from inside it). Without this, Zellij's
+  `new-pane --direction right` splits whatever the tab's active pane happens
+  to be, landing the new pane after "hive" instead of after the other
+  agents.
+- **`layout/model.PaneSpec` gained one level of nesting** (`children`,
+  `direction`): a non-empty `children` makes a `PaneSpec` a split container
+  instead of a leaf. `agents_tab`'s `control="right"` uses it to nest "hive"
+  under the *last* agent pane's own column (that pane on top, "hive" at a
+  fixed `size="8"` on the bottom) instead of giving it a separate full-height
+  30%-wide column — the column now splits evenly with the other agent
+  pane(s), matching what `control="none"` already gave them.
+  `mux/zellij/kdl.py:render_pane` recurses into `children` (no `name`
+  attribute on a container node, since Zellij pane names are for leaves).
+  `mux/tmux/backend.py` has no native nested layout, so nesting is realized
+  by `_iter_leaves` (a depth-first `(leaf, split_direction)` walk relying on
+  tmux's "the new pane becomes active" default to chain each split off the
+  previous leaf in that exact order) plus fixing `new_tab`/`bootstrap` to
+  compute pane0 from the flattened leaves rather than indexing `spec.panes[0]`
+  directly (which is a container, not a leaf, in the `n=1` case — indexing it
+  would have launched a bare `$SHELL` instead of the agent). `_iter_leaves`
+  only supports a container as the *last* element of the list it's in;
+  `layout/tabs.py`'s bundled tool tabs (`teams`, `shell`, `workflow`, `git`,
+  `tests`, `nvim`) were deliberately left flat, not revisited.

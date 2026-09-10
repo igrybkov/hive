@@ -253,16 +253,40 @@ def test_start_calls_ensure_session_each_restart_iteration():
 # ---------------------------------------------------------------------------
 
 
-def _pane(id_: str, tab_id: str, *, focused: bool = False) -> PaneInfo:
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("c2: Bohdan", 2),
+        ("c2: Bohdan [claude]", 2),
+        ("c12", 12),
+        ("hold: c2: Bohdan", 2),  # tmux's suspended-pane title (commands/pane.py:hold)
+        ("hold: c2", 2),
+        ("hold: hive run --restart", None),  # a hold pane with no HIVE_PANE_ID env
+        ("hive", None),
+        ("", None),
+    ],
+)
+def test_pane_hive_id_parses_zellij_and_tmux_titles(title, expected):
+    assert session._pane_hive_id(title) == expected
+
+
+def _pane(
+    id_: str,
+    tab_id: str,
+    *,
+    focused: bool = False,
+    title: str = "",
+    suspended: bool = False,
+) -> PaneInfo:
     return PaneInfo(
         id=id_,
         tab_id=tab_id,
-        title="",
+        title=title,
         command="",
         cwd="",
         focused=focused,
         exited=False,
-        suspended=False,
+        suspended=suspended,
     )
 
 
@@ -319,6 +343,111 @@ def test_new_agent_pane_opens_tab_when_full(hive_path):
     assert spec.name == "agents"
     assert len(spec.panes) == 1
     assert spec.panes[0].env == (("HIVE_PANE_ID", "3"), ("HIVE_PANE_LABEL", "Chris"))
+
+
+def test_new_agent_pane_reuses_idle_suspended_pane(hive_path):
+    """A `start_suspended` pane from the initial agents_tab (c2) has no live
+    hive socket yet -- only its layout-assigned title identifies it. Pressing
+    "New agent" with that idle slot sitting there should focus/start it, not
+    duplicate it (the pre-fix bug: a 3rd pane split into an already-full
+    2-agent tab, handed c2's own HIVE_PANE_ID again)."""
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("3", "t1", title="c1: Anton"),
+            _pane("4", "t1", title="c2: Bohdan", suspended=True),
+        ],
+    )
+    with _live("s", "3", 1):
+        pane_id = session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+
+    assert mux.named("new_pane") == []
+    assert mux.named("new_tab") == []
+    assert mux.named("focus_pane") == [("focus_pane", ("4",), {})]
+    assert pane_id == "4"
+
+
+def test_new_agent_pane_no_focus_skips_reuse_focus_call(hive_path):
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("3", "t1", title="c1: Anton"),
+            _pane("4", "t1", title="c2: Bohdan", suspended=True),
+        ],
+    )
+    with _live("s", "3", 1):
+        pane_id = session.new_agent_pane(
+            mux=mux,
+            focus=False,
+            settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2)),
+        )
+
+    assert mux.named("focus_pane") == []
+    assert pane_id == "4"
+
+
+def test_new_agent_pane_override_ignores_idle_pane_and_opens_tab_when_full(hive_path):
+    """An idle slot's command is fixed at layout time (no `-a`/`-p`/`-w`), so
+    an explicit override must never be satisfied by silently resuming it."""
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("3", "t1", title="c1: Anton"),
+            _pane("4", "t1", title="c2: Bohdan", suspended=True),
+        ],
+    )
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux,
+            agent="codex",
+            settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2)),
+        )
+
+    assert mux.named("new_pane") == []
+    calls = mux.named("new_tab")
+    assert len(calls) == 1
+    spec = calls[0][1][0]
+    assert spec.panes[0].env == (("HIVE_PANE_ID", "3"), ("HIVE_PANE_LABEL", "Chris"))
+
+
+def test_new_agent_pane_splits_next_to_last_agent_not_focused_control_pane(hive_path):
+    """The control-plane "hive" pane is where the "New agent" keypress
+    physically originates, so it's Zellij's currently-active pane in the tab
+    -- `new-pane --direction right` splits *that*, landing the new pane after
+    "hive" instead of after the other agent pane, unless something first
+    moves focus back onto an actual agent pane."""
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("3", "t1", title="c1: Anton"),
+            _pane("9", "t1", title="hive", focused=True),
+        ],
+    )
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+
+    focus_calls = mux.named("focus_pane")
+    new_pane_calls = mux.named("new_pane")
+    assert focus_calls == [("focus_pane", ("3",), {})]
+    assert len(new_pane_calls) == 1
+    # the split call itself happens after the refocus onto the agent pane
+    assert mux.calls.index(focus_calls[0]) < mux.calls.index(new_pane_calls[0])
+
+
+def test_new_agent_pane_no_refocus_when_already_on_an_agent_pane(hive_path):
+    mux = FakeMux(
+        session="s", panes=[_pane("3", "t1", title="c1: Anton", focused=True)]
+    )
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+
+    assert mux.named("focus_pane") == []
 
 
 def test_new_agent_pane_passes_agent_profile_branch(hive_path):

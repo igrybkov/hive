@@ -136,8 +136,10 @@ HIVE_AGENT=gemini hive zellij             # Use Gemini via env var
 
 The default `zellij.layout: "agent"` renders **one tab**: `zellij.agents_per_tab`
 (1 or 2) agent panes running `hive run --restart`, side by side, plus a
-`hive status --watch --compact` column controlled by `zellij.control_plane`
-(`right`, `bottom`, or `none`). It re-renders on every `hive zellij` start —
+`hive status --watch --compact` pane controlled by `zellij.control_plane`:
+`right` nests it under the *last* agent pane's own column (that pane on top,
+the control plane at the bottom), `bottom` gives it a full-width row under
+every agent pane, `none` omits it. It re-renders on every `hive zellij` start —
 there's no static file to edit. Further agent tabs and tool tabs are opened
 on demand (see `layout/tabs.py:BUNDLED` for the bundled tool tabs — `teams`,
 `shell`, `workflow`, `git`, `tests`, `nvim`); add your own or override a
@@ -722,8 +724,11 @@ Each item can be:
 
 - **Type:** `string` (`"right"`, `"bottom"`, or `"none"`)
 - **Default:** `"right"`
-- **Description:** Where the `hive status --watch --compact` column sits in
-  the `"agent"` layout's tab (or whether it's omitted).
+- **Description:** Where the `hive status --watch --compact` pane sits in the
+  `"agent"` layout's tab (or whether it's omitted). `"right"` nests it under
+  the *last* agent pane's own column (that pane on top, the control plane at
+  the bottom) rather than giving it a separate column; `"bottom"` gives it a
+  full-width row under every agent pane instead.
 
 #### `zellij.session_name`
 

@@ -44,8 +44,21 @@ def _pad(indent: int) -> str:
 
 
 def render_pane(p: PaneSpec, indent: int = 2) -> str:
-    """Render one pane node; `indent` is the depth of its own opening line."""
+    """Render one pane node; `indent` is the depth of its own opening line.
+
+    A pane with `children` is a nested split container (no `name`, since
+    Zellij pane names are for leaves): `pane split_direction="..." { ... }`,
+    recursing into each child at `indent + 1`.
+    """
     pad = _pad(indent)
+    if p.children:
+        attrs = [f"split_direction={kdl_string(p.direction)}"]
+        if p.size:
+            attrs.append(f"size={kdl_string(p.size)}")
+        lines = [f"{pad}pane {' '.join(attrs)} {{"]
+        lines.extend(render_pane(c, indent + 1) for c in p.children)
+        lines.append(f"{pad}}}")
+        return "\n".join(lines)
     inner = _pad(indent + 1)
     attrs = [f"name={kdl_string(p.name)}"]
     if p.size:

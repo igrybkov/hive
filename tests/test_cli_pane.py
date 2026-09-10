@@ -207,6 +207,39 @@ class TestPaneHold:
         assert result.exit_code == 0
         m.assert_called_once()
 
+    def test_hold_marker_carries_hive_pane_identity_under_tmux(
+        self, cli_runner, monkeypatch
+    ):
+        """tmux has no layout-assigned pane title the way Zellij does -- an
+        agent pane's `hold: ` marker is the only place its identity survives
+        until `hive run` starts. Without HIVE_PANE_ID/LABEL in the title,
+        services/session.py can't tell a suspended agent pane from any other
+        held pane (e.g. `watch-tests`), and `new_agent_pane` duplicates it."""
+        monkeypatch.setenv("HIVE_PANE_ID", "2")
+        monkeypatch.setenv("HIVE_PANE_LABEL", "Bohdan")
+        mux = FakeMux(pane_id="%3")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch("hive_cli.commands.pane.session.hold"),
+        ):
+            result = cli_runner.invoke(app, ["pane", "hold", "--", "hive", "run"])
+        assert result.exit_code == 0
+        assert mux.named("rename_pane") == [
+            ("rename_pane", ("%3", "hold: c2: Bohdan"), {})
+        ]
+
+    def test_hold_marker_without_label_omits_it(self, cli_runner, monkeypatch):
+        monkeypatch.setenv("HIVE_PANE_ID", "2")
+        monkeypatch.delenv("HIVE_PANE_LABEL", raising=False)
+        mux = FakeMux(pane_id="%3")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch("hive_cli.commands.pane.session.hold"),
+        ):
+            result = cli_runner.invoke(app, ["pane", "hold", "--", "hive", "run"])
+        assert result.exit_code == 0
+        assert mux.named("rename_pane") == [("rename_pane", ("%3", "hold: c2"), {})]
+
 
 class TestPaneSetStatusTitle:
     def test_set_status_calls_backend(self, cli_runner):

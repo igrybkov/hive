@@ -3,9 +3,11 @@
 `BUNDLED` transcribes tabs 3-8 of the old `layout/bundled/agent.kdl` (now
 `agent-16.kdl`): same names, commands, args, cwd and sizes. The old file
 nested splits two levels deep ("4. Shell", "5. Workflow") and used a Zellij
-`stacked=true` container ("3. Teams"); `TabSpec` only supports one top-level
-split, so those are flattened to a single-level split here — a deliberate,
-documented deviation, not an oversight.
+`stacked=true` container ("3. Teams"); those are flattened to a single-level
+split here — a deliberate, documented deviation, not an oversight. (A later
+change gave `PaneSpec` one level of nesting via `children` -- used only by
+`agents_tab`'s control="right" to tuck "hive" under the last agent pane -- but
+the bundled tool tabs above were deliberately left flat, not revisited.)
 """
 
 from __future__ import annotations
@@ -57,13 +59,27 @@ def agents_tab(
                 env=env,
             )
         )
-    if control != "none":
+    if control == "bottom":
         panes.append(
             PaneSpec(
                 name="hive",
                 command=(hive, "status", "--watch", "--compact"),
-                size="30%" if control == "right" else "8",
+                size="8",
             )
+        )
+    elif control == "right":
+        hive_pane = PaneSpec(
+            name="hive", command=(hive, "status", "--watch", "--compact"), size="8"
+        )
+        # Nested under the *last* agent pane's own column (a horizontal
+        # split: agent pane on top, "hive" at the bottom) rather than its
+        # own full-height column -- the column keeps splitting evenly with
+        # the other agent pane(s), "hive" just takes the bottom slice of it.
+        panes[-1] = PaneSpec(
+            name="",
+            command=(),
+            children=(panes[-1], hive_pane),
+            direction="horizontal",
         )
     direction = "horizontal" if control == "bottom" else "vertical"
     return TabSpec(name="agents", panes=tuple(panes), direction=direction, focus=focus)

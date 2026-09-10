@@ -23,7 +23,7 @@ once the session is already known to exist.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from ...core import proc
@@ -73,6 +73,35 @@ def _tab_info(fields: list[str]) -> TabInfo | None:
         return None
     wid, name, active = fields
     return TabInfo(id=wid, name=name, active=active == "1")
+
+
+def _iter_leaves(
+    panes: Sequence[PaneSpec], direction: str
+) -> Iterator[tuple[PaneSpec, str]]:
+    """Depth-first (leaf, split_direction) pairs across a `PaneSpec` tree.
+
+    tmux has no native nested layout: every pane after the first is created
+    by splitting whatever tmux's "new pane becomes active" default just made
+    active, so nesting can only be realized by picking the right split flag
+    at each step, in the exact order the tree implies. A container's first
+    leaf inherits *its parent list's* direction (it visually sits where the
+    container sits, splitting off whatever came before the container); every
+    other leaf in the container uses the container's *own* `direction`
+    (splitting off the previous leaf within that same container).
+
+    Invariant this relies on: a container must be the *last* element of the
+    list it's in (the only real use, `agents_tab`'s control="right", nests
+    "hive" under the last agent pane). A sibling placed after a container
+    is not supported -- it would split off the container's last leaf, not
+    the whole container -- so don't build layouts that need that.
+    """
+    for pane in panes:
+        if not pane.children:
+            yield pane, direction
+            continue
+        leaves = list(_iter_leaves(pane.children, pane.direction))
+        yield leaves[0][0], direction  # the container's position, not its own direction
+        yield from leaves[1:]
 
 
 def _pane_argv(pane: PaneSpec) -> list[str]:
@@ -217,12 +246,16 @@ class TmuxMux:
             self._tmux("select-pane", "-t", pane_id, "-T", name)
         return pane_id
 
-    def apply_tab(
-        self, spec: TabSpec, window_id: str, panes: Sequence[PaneSpec]
+    def _apply_leaves(
+        self, leaves: Sequence[tuple[PaneSpec, str]], window_id: str
     ) -> None:
-        """Split the rest of a tab's panes into an already-created window."""
-        flag = "-h" if spec.direction == "vertical" else "-v"
-        for pane in panes:
+        """Split each (leaf, split_direction) pair from `_iter_leaves` into
+        an already-created window, in order -- tmux has no native nested
+        layout, so relying on its default "the new pane becomes active"
+        behavior to chain each split off the previous leaf is what actually
+        realizes the nesting `_iter_leaves` computed."""
+        for pane, direction in leaves:
+            flag = "-h" if direction == "vertical" else "-v"
             args = ["split-window", flag, "-t", window_id]
             if pane.cwd:
                 args += ["-c", pane.cwd]
@@ -231,7 +264,8 @@ class TmuxMux:
             self._tmux(*args, "-P", "-F", "#{pane_id}", "--", *_pane_argv(pane))
 
     def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:
-        pane0 = spec.panes[0]
+        leaves = list(_iter_leaves(spec.panes, spec.direction))
+        pane0 = leaves[0][0]
         args = ["new-window"]
         if not focus:
             args.append("-d")
@@ -243,23 +277,24 @@ class TmuxMux:
             return None
         window_id = result.stdout.strip() or None
         if window_id:
-            self.apply_tab(spec, window_id, spec.panes[1:])
+            self._apply_leaves(leaves[1:], window_id)
         return window_id
 
     def bootstrap(self, spec: SessionSpec) -> None:
         """Idempotent: create the session (first tab/pane inline, the rest
-        via `apply_tab`/`new_tab`) only when it doesn't already exist."""
+        via `_apply_leaves`/`new_tab`) only when it doesn't already exist."""
         if self.session_exists(spec.name):
             return
         first_tab = spec.tabs[0]
-        pane0 = first_tab.panes[0]
+        leaves = list(_iter_leaves(first_tab.panes, first_tab.direction))
+        pane0 = leaves[0][0]
         args = ["new-session", "-d", "-s", spec.name, "-n", first_tab.name]
         if pane0.cwd:
             args += ["-c", pane0.cwd]
         result = self._tmux(*args, "-P", "-F", "#{window_id}", "--", *_pane_argv(pane0))
         window_id = result.stdout.strip() if result else None
         if window_id:
-            self.apply_tab(first_tab, window_id, first_tab.panes[1:])
+            self._apply_leaves(leaves[1:], window_id)
         for tab in spec.tabs[1:]:
             self.new_tab(tab, focus=False)
 

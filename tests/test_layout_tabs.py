@@ -84,17 +84,33 @@ class TestResolveTab:
 class TestAgentsTab:
     def test_n1_has_one_agent_pane_and_control(self):
         tab = agents_tab(n=1, control="right", hive="/opt/hive", labels=["Anton"])
-        assert len(tab.panes) == 2
-        assert tab.panes[0].name == "c1: Anton"
-        assert tab.panes[0].suspended is False
-        assert tab.panes[1].name == "hive"
+        # n=1: no other agent pane to sit beside, so the whole tab is just
+        # the nested container (the agent pane on top, "hive" at the bottom).
+        assert len(tab.panes) == 1
+        container = tab.panes[0]
+        assert container.children[0].name == "c1: Anton"
+        assert container.children[0].suspended is False
+        assert container.children[1].name == "hive"
 
     def test_n2_second_pane_suspended(self):
         tab = agents_tab(
             n=2, control="right", hive="/opt/hive", labels=["Anton", "Bohdan"]
         )
         assert tab.panes[0].suspended is False
-        assert tab.panes[1].suspended is True
+        # c2 is nested under "hive" (control="right"), not a flat sibling.
+        assert tab.panes[1].children[0].name == "c2: Bohdan"
+        assert tab.panes[1].children[0].suspended is True
+
+    def test_control_right_nests_hive_under_last_agent_pane(self):
+        tab = agents_tab(
+            n=2, control="right", hive="/opt/hive", labels=["Anton", "Bohdan"]
+        )
+        assert len(tab.panes) == 2
+        assert tab.panes[0].name == "c1: Anton"
+        container = tab.panes[1]
+        assert container.children[0].name == "c2: Bohdan"
+        assert container.children[1].name == "hive"
+        assert container.direction == "horizontal"
 
     def test_control_none_has_no_control_pane(self):
         tab = agents_tab(
