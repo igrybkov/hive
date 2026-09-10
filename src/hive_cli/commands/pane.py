@@ -214,6 +214,10 @@ def hold(
     Examples:
         hive pane hold -- claude
     """
+    mux = get_mux()
+    pane_id = mux.own_pane_id() if mux else None
+    if mux and pane_id:
+        mux.rename_pane(pane_id, f"hold: {' '.join(command)}")
     session.hold(list(command), prompt=prompt, wait=_wait_for_enter)
 
 

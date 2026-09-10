@@ -186,6 +186,27 @@ class TestPaneHold:
         assert args[0] == ["some-cmd"]
         assert callable(kwargs["prompt"]) and callable(kwargs["wait"])
 
+    def test_renames_pane_to_hold_marker_before_waiting(self, cli_runner):
+        # `TmuxMux.list_panes` keys `suspended` off `title.startswith("hold:")`,
+        # so this rename has to land before `session.hold` blocks on Enter.
+        mux = FakeMux(pane_id="%3")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch("hive_cli.commands.pane.session.hold"),
+        ):
+            result = cli_runner.invoke(app, ["pane", "hold", "--", "claude"])
+        assert result.exit_code == 0
+        assert mux.named("rename_pane") == [("rename_pane", ("%3", "hold: claude"), {})]
+
+    def test_no_mux_skips_rename(self, cli_runner):
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=None),
+            patch("hive_cli.commands.pane.session.hold") as m,
+        ):
+            result = cli_runner.invoke(app, ["pane", "hold", "--", "claude"])
+        assert result.exit_code == 0
+        m.assert_called_once()
+
 
 class TestPaneSetStatusTitle:
     def test_set_status_calls_backend(self, cli_runner):
