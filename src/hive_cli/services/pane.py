@@ -44,10 +44,10 @@ from ..state.pane_state import (
     title_for,
 )
 from ..state.server import PaneStateServer
-from .restart import RestartFloor
+from . import restart
+from .restart import Pick, RestartFloor
 
 CommandRunner = Callable[[list[str]], int]
-Pick = Callable[..., tuple[bool, str | None]]
 
 
 def _noop(*_args: object, **_kwargs: object) -> None:
@@ -293,58 +293,8 @@ def apply_workdir_override(primary_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _select_for_iteration(
-    pick: Pick,
-    *,
-    worktree: str | None,
-    last_selected_branch: str | None,
-    auto_select_branch: str | None,
-    auto_select_timeout: float,
-    first_iteration: bool,
-    on_branch_selected: Callable[[str | None], None],
-) -> tuple[bool, str | None]:
-    """Resolve the worktree for one restart-loop iteration.
-
-    Re-selects interactively when worktree is '-' or nothing is pinned yet
-    (only auto-selecting on the first iteration); otherwise just re-affirms
-    the existing branch.
-    """
-    if worktree == "-" or last_selected_branch is None:
-        current_auto_select = auto_select_branch if first_iteration else None
-        success, selected_branch = pick(
-            worktree,
-            last_selected_branch,
-            auto_select_branch=current_auto_select,
-            auto_select_timeout=auto_select_timeout,
-        )
-        if success:
-            on_branch_selected(selected_branch)
-        return success, selected_branch
-
-    success, _ = pick(worktree, last_selected_branch)
-    if success:
-        on_branch_selected(last_selected_branch)
-    return success, last_selected_branch
-
-
 def _publish_starting(ctx: PaneContext, branch: str | None) -> None:
     ctx.update(status="starting", branch=branch or "", worktree_path=os.getcwd())
-
-
-def _stop_requested(ctx: PaneContext) -> bool:
-    return ctx.server is not None and ctx.server.stop_requested.is_set()
-
-
-def _begin_iteration(ctx: PaneContext) -> None:
-    """Reset per-iteration state: restart flag, Ctrl+W workdir override."""
-    if ctx.server is not None:
-        ctx.server.restart_requested.clear()
-    # Workdir override (Ctrl+W) is session-scoped -- must be re-picked
-    # on each iteration so a previous run's choice doesn't leak.
-    rt = get_runtime_settings()
-    rt.workdir = None
-    rt.workdir_extras_override = None
-    ctx.update(status="selecting")
 
 
 def _restart_loop(
@@ -364,40 +314,50 @@ def _restart_loop(
     clear_screen: Callable[[], None],
     progress: Callable[[str], None],
     confirm_restart: Callable[[], None],
+    confirm_retry: Callable[[], None],
     restart_floor: RestartFloor,
 ) -> int:
-    """Re-select (or re-affirm) a worktree and re-run command until cancelled."""
-    first_iteration = True
+    """Re-select (or re-affirm) a worktree and re-run command until stopped.
 
+    Inside a pane (`ctx.server` set), only an explicit "stop" over the pane
+    socket ends the loop: a cancelled reselect, and a stray SIGINT between
+    runs (e.g. during `RestartFloor`'s backoff sleep, before the picker's
+    raw mode re-guards Ctrl+C), both just pause for Enter (`restart.pause_and_retry`,
+    see `restart.loop_step`) and retry -- otherwise the pane exits with
+    nothing running and no live socket left for the control plane to show,
+    indistinguishable from a crash. A real second Ctrl+C (or a non-blocking
+    `confirm_retry`, e.g. a test double) still stops it below; outside a
+    pane, with nothing to pause for, a caught interrupt is re-raised instead.
+    """
+    rc = restart.RestartConfig(
+        command=command,
+        pick=pick,
+        ctx=ctx,
+        runner=runner,
+        restart_confirmation=restart_confirmation,
+        restart_delay=restart_delay,
+        restart_message=restart_message,
+        worktree=worktree,
+        auto_select_branch=auto_select_branch,
+        auto_select_timeout=auto_select_timeout,
+        on_branch_selected=on_branch_selected,
+        clear_screen=clear_screen,
+        progress=progress,
+        confirm_restart=confirm_restart,
+        confirm_retry=confirm_retry,
+        restart_floor=restart_floor,
+    )
+    first_iteration = True
     try:
         while True:
-            _begin_iteration(ctx)
-            success, selected_branch = _select_for_iteration(
-                pick,
-                worktree=worktree,
+            should_stop, last_selected_branch = restart.loop_step(
+                rc,
                 last_selected_branch=last_selected_branch,
-                auto_select_branch=auto_select_branch,
-                auto_select_timeout=auto_select_timeout,
                 first_iteration=first_iteration,
-                on_branch_selected=on_branch_selected,
             )
             first_iteration = False
-            if not success:
+            if should_stop:
                 break
-            last_selected_branch = selected_branch
-            _publish_starting(ctx, selected_branch)
-
-            clear_screen()
-            restart_floor.started()
-            runner(command)
-            if _stop_requested(ctx):
-                break
-            progress(f"\n[dim]{restart_message}[/]")
-            restart_floor.exited()
-            if restart_confirmation:
-                confirm_restart()
-            if restart_delay > 0:
-                time.sleep(restart_delay)
     except KeyboardInterrupt:
         progress("\n[dim][hive] Stopped.[/]")
         return 0
@@ -472,6 +432,7 @@ def run_loop(
     clear_screen: Callable[[], None] = _noop,
     progress: Callable[[str], None] = _noop,
     confirm_restart: Callable[[], None] = _noop,
+    confirm_retry: Callable[[], None] = _noop,
     ctx: PaneContext | None = None,
     restart_floor: RestartFloor | None = None,
 ) -> int:
@@ -505,6 +466,8 @@ def run_loop(
         progress: Called with a Rich-markup message to display.
         confirm_restart: Called (and expected to block) before each restart
             when restart_confirmation is set.
+        confirm_retry: Called (and expected to block) before retrying a
+            cancelled reselect in --restart mode (see `_restart_loop`).
         ctx: The pane context; opened here when None and always closed on
             return, so the pane socket disappears when the loop ends.
         restart_floor: Backoff applied after fast exits in --restart mode
@@ -544,6 +507,7 @@ def run_loop(
                 clear_screen=clear_screen,
                 progress=progress,
                 confirm_restart=confirm_restart,
+                confirm_retry=confirm_retry,
                 restart_floor=restart_floor or RestartFloor(),
             )
 

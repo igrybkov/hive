@@ -420,6 +420,9 @@ def run_in_worktree(
         console.print("[dim][hive] Press Enter to restart...[/]")
         input()
 
+    def confirm_retry() -> None:
+        input()
+
     return pane.run_loop(
         command,
         select_and_change_to_worktree,
@@ -439,5 +442,6 @@ def run_in_worktree(
         clear_screen=console.clear,
         progress=console.print,
         confirm_restart=confirm_restart,
+        confirm_retry=confirm_retry,
         ctx=ctx,
     )
