@@ -13,8 +13,22 @@ from hive_cli.ui.tui.model import (
     build_rows,
     filter_rows,
     git_cell,
+    name_cell,
     status_cell,
 )
+
+
+def _pane(id_, tab="t1", *, title="", focused=False, exited=False, suspended=False):
+    return PaneInfo(
+        id=id_,
+        tab_id=tab,
+        title=title,
+        command="",
+        cwd="",
+        focused=focused,
+        exited=exited,
+        suspended=suspended,
+    )
 
 
 def _summary(**over) -> GitSummary:
@@ -145,6 +159,104 @@ class TestBuildRows:
         }
         rows = build_rows(states, {}, {}, {}, now=0.0)
         assert list(rows) == ["2", "1"]
+
+    def test_suspended_agent_slot_without_state_is_idle_row(self):
+        panes = {"4": _pane("4", title="c2: Bohdan", suspended=True)}
+        rows = build_rows({}, panes, {}, {}, now=0.0)
+        row = rows["4"]
+        assert row.hive_pane_id == 2
+        assert row.status == "idle"
+        assert row.title == "c2: Bohdan"
+
+    def test_tool_pane_without_state_has_blank_columns(self):
+        panes = {"9": _pane("9", title="lazygit")}
+        rows = build_rows({}, panes, {}, {}, now=0.0)
+        row = rows["9"]
+        assert row.hive_pane_id == 0
+        assert row.status == ""
+        assert row.agent == ""
+        assert row.title == "lazygit"
+
+    def test_exited_tool_pane_shows_exited(self):
+        panes = {"9": _pane("9", title="watch-tests", exited=True)}
+        rows = build_rows({}, panes, {}, {}, now=0.0)
+        assert rows["9"].status == "exited"
+
+    def test_own_pane_id_excluded(self):
+        panes = {"9": _pane("9", title="hive")}
+        rows = build_rows({}, panes, {}, {}, now=0.0, own_pane_id="9")
+        assert rows == {}
+
+    def test_state_ahead_of_next_list_panes_poll_still_gets_a_row(self):
+        """A pane's hive socket can register slightly before the next
+        `list-panes` poll refreshes `panes` -- the pre-G0 behavior of still
+        building a row from `states` alone must survive G0's rewrite."""
+        states = {"3": PaneState(pane_id="3", hive_pane_id=1, agent="claude")}
+        rows = build_rows(states, {}, {}, {}, now=0.0)
+        assert rows["3"].agent == "claude"
+
+    def test_live_state_pane_unaffected_by_bare_path(self):
+        state = PaneState(pane_id="3", hive_pane_id=1, agent="claude", tab_id="t1")
+        panes = {"3": _pane("3", title="c1: Anton [claude]")}
+        rows = build_rows({"3": state}, panes, {}, {}, now=0.0)
+        assert rows["3"].agent == "claude"
+        assert rows["3"].status == "selecting"  # PaneState default, not "idle"
+
+
+class TestNameCell:
+    def test_agent_row_prefers_label(self):
+        row = PaneRow(
+            pane_id="3",
+            hive_pane_id=1,
+            label="Anton",
+            agent="claude",
+            branch="",
+            worktree="",
+            status="busy",
+            status_since=0.0,
+            git="",
+            task="",
+            tab_id="t1",
+            focused=False,
+            title="c1: Anton",
+        )
+        assert name_cell(row) == "Anton"
+
+    def test_agent_row_falls_back_to_cid_without_label(self):
+        row = PaneRow(
+            pane_id="3",
+            hive_pane_id=1,
+            label="",
+            agent="claude",
+            branch="",
+            worktree="",
+            status="busy",
+            status_since=0.0,
+            git="",
+            task="",
+            tab_id="t1",
+            focused=False,
+            title="c1",
+        )
+        assert name_cell(row) == "c1"
+
+    def test_bare_row_uses_title(self):
+        row = PaneRow(
+            pane_id="9",
+            hive_pane_id=0,
+            label="",
+            agent="",
+            branch="",
+            worktree="",
+            status="",
+            status_since=0.0,
+            git="",
+            task="",
+            tab_id="t1",
+            focused=False,
+            title="lazygit",
+        )
+        assert name_cell(row) == "lazygit"
 
 
 class TestFilterRows:

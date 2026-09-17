@@ -1,4 +1,4 @@
-"""Maps the four on-demand actions to the `KeybindSpec` the mux renderer needs.
+"""Maps the five on-demand actions to the `KeybindSpec` the mux renderer needs.
 
 Each enabled action becomes one binding: a Zellij key, the `hive` argv `Run`
 should launch, and the Run-block options (`close_on_exit`, `floating`,
@@ -20,12 +20,14 @@ ACTIONS: tuple[str, ...] = (
     "new_agent_tab",
     "floating_shell",
     "control_plane",
+    "worktree_shell",
 )
 
 
 @dataclass(frozen=True)
 class Keybind:
-    action: str  # new_agent_pane | new_agent_tab | floating_shell | control_plane
+    # new_agent_pane | new_agent_tab | floating_shell | control_plane | worktree_shell
+    action: str
     key: str  # zellij syntax: "Alt a", "Alt Shift s"
 
 
@@ -33,9 +35,17 @@ def _binding(
     action: str, *, hive: str, shell: str
 ) -> tuple[tuple[str, ...], dict[str, str | bool]]:
     if action == "new_agent_pane":
-        return (hive, "pane", "new"), {"close_on_exit": True}
+        # floating, not tiled: `hive pane new` itself creates the real agent
+        # pane via a separate mux call (split or new tab) -- if *this*
+        # runner pane were tiled too, it would briefly become a third pane
+        # in the target tab (Zellij has to give it some space before
+        # `close_on_exit` removes it again), and closing it back out is a
+        # second pane-count change that doesn't reliably restore an even
+        # split (confirmed live: this is what produced the transient
+        # "thirds, then 1/3 + 2/3" behavior, not the split itself).
+        return (hive, "pane", "new"), {"floating": True, "close_on_exit": True}
     if action == "new_agent_tab":
-        return (hive, "tab", "agents"), {"close_on_exit": True}
+        return (hive, "tab", "agents"), {"floating": True, "close_on_exit": True}
     if action == "floating_shell":
         argv = (hive, "wt", "exec", "--here", "--", *shlex.split(shell))
         return argv, {"floating": True, "name": "shell", "close_on_exit": True}
@@ -47,6 +57,9 @@ def _binding(
             "width": "80%",
             "height": "80%",
         }
+    if action == "worktree_shell":
+        argv = (hive, "wt", "exec", "--worktree", "-", "--", *shlex.split(shell))
+        return argv, {"floating": True, "name": "shell", "close_on_exit": True}
     raise ValueError(f"unknown keybind action: {action}")
 
 

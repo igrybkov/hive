@@ -191,6 +191,12 @@ class TmuxMux:
     def rename_tab(self, tab_id: str, name: str) -> None:
         self._tmux("rename-window", "-t", tab_id, name)
 
+    def resume_pane(self, pane_id: str) -> None:
+        """A `suspended` pane here is always `hive pane hold` (F6) wrapping
+        the real command, blocked on `input()` -- injecting Enter unblocks
+        it exactly like a person pressing it."""
+        self._tmux("send-keys", "-t", pane_id, "Enter")
+
     def current_tab_id(self) -> str | None:
         """Not in F6-tmux.md's method table but required by the `Mux`
         protocol; mirrors `ZellijMux`'s own-pane-first-else-focused fallback."""
@@ -214,10 +220,14 @@ class TmuxMux:
         focus: bool = True,
         floating: bool = False,
         suspended: bool = False,
+        stacked: bool = False,
         width: str | None = None,
         height: str | None = None,
     ) -> str | None:
         del close_on_exit  # tmux default: `remain-on-exit off`, set once in conf.py
+        del stacked  # tmux has no native pane stacking; G2's stacked mode falls
+        # back to a plain split here (documented divergence, same style as F6's
+        # other backend divergences).
         if floating:
             self.popup(
                 argv,

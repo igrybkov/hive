@@ -174,6 +174,49 @@ class TestPaneRestart:
         assert result.exit_code == 1
 
 
+class TestPaneLayout:
+    def test_no_arg_prints_current_mode(self, cli_runner):
+        mux = FakeMux(session="s")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch(
+                "hive_cli.commands.pane.session.get_agents_layout",
+                return_value="stacked",
+            ) as get,
+        ):
+            result = cli_runner.invoke(app, ["pane", "layout"])
+        assert result.exit_code == 0
+        assert "stacked" in result.output
+        get.assert_called_once_with(mux=mux)
+
+    def test_mode_arg_sets_it(self, cli_runner):
+        mux = FakeMux(session="s")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch(
+                "hive_cli.commands.pane.session.set_agents_layout",
+                return_value="tabs",
+            ) as set_,
+        ):
+            result = cli_runner.invoke(app, ["pane", "layout", "tabs"])
+        assert result.exit_code == 0
+        assert "tabs" in result.output
+        set_.assert_called_once_with("tabs", mux=mux)
+
+    def test_hive_error_prints_and_exits(self, cli_runner):
+        mux = FakeMux(session="s")
+        with (
+            patch("hive_cli.commands.pane.get_mux", return_value=mux),
+            patch(
+                "hive_cli.commands.pane.session.set_agents_layout",
+                side_effect=HiveError("unknown agents layout: 'bogus'"),
+            ),
+        ):
+            result = cli_runner.invoke(app, ["pane", "layout", "bogus"])
+        assert result.exit_code == 1
+        assert "bogus" in result.output
+
+
 class TestPaneHold:
     def test_calls_service_with_argv_and_callables(self, cli_runner):
         # Mocks session.hold itself -- never let the real os.execvp default

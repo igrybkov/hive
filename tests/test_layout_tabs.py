@@ -119,13 +119,70 @@ class TestAgentsTab:
         assert len(tab.panes) == 2
         assert all(p.name != "hive" for p in tab.panes)
 
-    def test_control_bottom_puts_control_pane_last(self):
+    def test_control_bottom_puts_control_pane_first(self):
+        """First, not last: a newly split-in agent pane always lands after
+        the existing agent panes, never adjacent to "hive"."""
         tab = agents_tab(
             n=2, control="bottom", hive="/opt/hive", labels=["Anton", "Bohdan"]
         )
-        assert tab.panes[-1].name == "hive"
-        assert tab.panes[-1].size == "8"
+        assert tab.panes[0].name == "hive"
+        assert tab.panes[0].size == "25%"
+        assert [p.name for p in tab.panes[1:]] == ["c1: Anton", "c2: Bohdan"]
         assert tab.direction == "horizontal"
+
+    def test_stacked_sets_tabspec_stacked(self):
+        tab = agents_tab(
+            n=2,
+            control="none",
+            hive="/opt/hive",
+            labels=["Anton", "Bohdan"],
+            stacked=True,
+        )
+        assert tab.stacked is True
+
+    def test_not_stacked_by_default(self):
+        tab = agents_tab(n=2, control="none", hive="/opt/hive", labels=["Anton"])
+        assert tab.stacked is False
+
+    def test_stacked_with_control_right_falls_back_to_split(self):
+        """Scope limitation (G2): control="right" nests "hive" into the last
+        agent pane's own column, and stacking that nested column raises
+        questions v1 doesn't answer -- right-nesting wins, stacked or not."""
+        tab = agents_tab(
+            n=2,
+            control="right",
+            hive="/opt/hive",
+            labels=["Anton", "Bohdan"],
+            stacked=True,
+        )
+        assert tab.stacked is False
+
+    def test_stacked_with_control_bottom_keeps_hive_out_of_stack(self):
+        """ "hive" must stay a full-width, always-visible row, not become a
+        stack member that disappears whenever a different agent pane is
+        selected -- only the agent panes are nested into the stack."""
+        tab = agents_tab(
+            n=2,
+            control="bottom",
+            hive="/opt/hive",
+            labels=["Anton", "Bohdan"],
+            stacked=True,
+        )
+        assert tab.stacked is False
+        assert tab.panes[0].name == "hive"
+        agent_group = tab.panes[1]
+        assert agent_group.stacked is True
+        assert [p.name for p in agent_group.children] == ["c1: Anton", "c2: Bohdan"]
+
+    def test_stacked_with_control_bottom_single_agent_pane_not_wrapped(self):
+        """n=1: nothing to stack, so no container is introduced -- matches
+        the unstacked control="bottom" shape exactly."""
+        tab = agents_tab(
+            n=1, control="bottom", hive="/opt/hive", labels=["Anton"], stacked=True
+        )
+        assert tab.stacked is False
+        assert [p.name for p in tab.panes] == ["hive", "c1: Anton"]
+        assert tab.panes[1].children == ()
 
     def test_labels_beyond_list_get_bare_name(self):
         tab = agents_tab(n=2, control="none", hive="/opt/hive", labels=["Anton"])
@@ -155,3 +212,25 @@ class TestSessionSpec:
         assert len(spec.tabs) == 1
         assert spec.tabs[0].focus is True
         assert len(spec.tabs[0].panes) == 1
+
+    def test_control_plane_tab_renders_dedicated_first_tab(self):
+        """control_plane: "tab" -- the status board gets its own dedicated
+        first tab, created right away alongside the agents tab (no on-demand
+        step); the agents tab follows at tab 2 and is the one focused on
+        attach, no longer carrying a nested "hive" pane of its own."""
+        settings = HiveSettings(
+            zellij=ZellijConfig(
+                agents_per_tab=2, control_plane="tab", pane_labels=["Ann", "Bo"]
+            )
+        )
+        spec = session_spec(name="s", hive="/opt/hive", settings=settings)
+        assert len(spec.tabs) == 2
+        control, agents = spec.tabs
+        assert control.name == "control"
+        assert control.focus is False
+        assert len(control.panes) == 1
+        assert control.panes[0].command == ("/opt/hive", "status", "--watch")
+        assert agents.name == "agents"
+        assert agents.focus is True
+        assert len(agents.panes) == 2
+        assert all(not p.children for p in agents.panes)

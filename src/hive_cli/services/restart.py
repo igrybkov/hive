@@ -1,6 +1,5 @@
 """Restart-loop building blocks shared by `hive run --restart`'s pane loop:
-backoff after fast exits, worktree reselection per iteration, and pausing
-(instead of ending the loop) when a reselect is cancelled or interrupted.
+backoff after fast exits and worktree reselection per iteration.
 """
 
 from __future__ import annotations
@@ -91,24 +90,6 @@ def select_for_iteration(
     return success, last_selected_branch
 
 
-def pause_and_retry(
-    progress: Callable[[str], None], confirm_retry: Callable[[], None]
-) -> None:
-    """Wait for Enter (or a caller-supplied stand-in) before retrying.
-
-    A `confirm_retry` that returns instantly isn't really blocking (a
-    broken caller, a test double) -- fall back to a plain sleep so a
-    cancelled pick can't spin the loop.
-    """
-    progress(
-        "\n[dim][hive] Paused. Press Enter to try again... (Ctrl+C again to stop)[/]"
-    )
-    started = time.monotonic()
-    confirm_retry()
-    if time.monotonic() - started < 0.5:
-        time.sleep(0.5)
-
-
 def begin_iteration(ctx: PaneContext) -> None:
     """Reset per-iteration state: restart flag, Ctrl+W workdir override."""
     if ctx.server is not None:
@@ -142,29 +123,23 @@ def run_once(
     """Run `command` once for one restart-loop iteration.
 
     Returns "stop" (an explicit "stop" came in while the command was
-    running), "pause" (a stray interrupt, only when `ctx` has a live pane to
-    pause for -- otherwise it's re-raised), or "continue".
+    running) or "continue". A KeyboardInterrupt propagates to the caller.
     """
-    try:
-        ctx.update(
-            status="starting", branch=selected_branch or "", worktree_path=os.getcwd()
-        )
-        clear_screen()
-        restart_floor.started()
-        runner(command)
-        if is_stop_requested(ctx):
-            return "stop"
-        progress(f"\n[dim]{restart_message}[/]")
-        restart_floor.exited()
-        if restart_confirmation:
-            confirm_restart()
-        if restart_delay > 0:
-            time.sleep(restart_delay)
-        return "continue"
-    except KeyboardInterrupt:
-        if ctx.server is None:
-            raise
-        return "pause"
+    ctx.update(
+        status="starting", branch=selected_branch or "", worktree_path=os.getcwd()
+    )
+    clear_screen()
+    restart_floor.started()
+    runner(command)
+    if is_stop_requested(ctx):
+        return "stop"
+    progress(f"\n[dim]{restart_message}[/]")
+    restart_floor.exited()
+    if restart_confirmation:
+        confirm_restart()
+    if restart_delay > 0:
+        time.sleep(restart_delay)
+    return "continue"
 
 
 @dataclass
@@ -187,53 +162,43 @@ class RestartConfig:
     clear_screen: Callable[[], None]
     progress: Callable[[str], None]
     confirm_restart: Callable[[], None]
-    confirm_retry: Callable[[], None]
     restart_floor: RestartFloor
 
 
 def loop_step(
     rc: RestartConfig, *, last_selected_branch: str | None, first_iteration: bool
 ) -> tuple[bool, str | None]:
-    """One restart-loop iteration. Returns (should_stop, last_selected_branch)."""
+    """One restart-loop iteration. Returns (should_stop, last_selected_branch).
+
+    A cancelled pick just ends the loop. A KeyboardInterrupt during either
+    step propagates to the caller (`_restart_loop`'s own handler) instead of
+    being swallowed here -- a live pane and a bare terminal behave the same.
+    """
     begin_iteration(rc.ctx)
-    selected_branch: str | None = None
-    try:
-        success, selected_branch = select_for_iteration(
-            rc.pick,
-            worktree=rc.worktree,
-            last_selected_branch=last_selected_branch,
-            auto_select_branch=rc.auto_select_branch,
-            auto_select_timeout=rc.auto_select_timeout,
-            first_iteration=first_iteration,
-            on_branch_selected=rc.on_branch_selected,
-        )
-    except KeyboardInterrupt:
-        if rc.ctx.server is None:
-            raise
-        success = False
-
-    outcome = "pause"
-    if success:
-        last_selected_branch = selected_branch
-        outcome = run_once(
-            rc.command,
-            selected_branch,
-            ctx=rc.ctx,
-            runner=rc.runner,
-            clear_screen=rc.clear_screen,
-            progress=rc.progress,
-            restart_message=rc.restart_message,
-            restart_confirmation=rc.restart_confirmation,
-            confirm_restart=rc.confirm_restart,
-            restart_delay=rc.restart_delay,
-            restart_floor=rc.restart_floor,
-        )
-
-    if outcome in ("continue", "stop"):
-        return outcome == "stop", last_selected_branch
-    # "pause": cancelled pick / stray interrupt, but only with a pane to
-    # pause for -- a bare terminal run just ends here.
-    if rc.ctx.server is None or is_stop_requested(rc.ctx):
+    success, selected_branch = select_for_iteration(
+        rc.pick,
+        worktree=rc.worktree,
+        last_selected_branch=last_selected_branch,
+        auto_select_branch=rc.auto_select_branch,
+        auto_select_timeout=rc.auto_select_timeout,
+        first_iteration=first_iteration,
+        on_branch_selected=rc.on_branch_selected,
+    )
+    if not success:
         return True, last_selected_branch
-    pause_and_retry(rc.progress, rc.confirm_retry)
-    return False, last_selected_branch
+    last_selected_branch = selected_branch
+
+    outcome = run_once(
+        rc.command,
+        selected_branch,
+        ctx=rc.ctx,
+        runner=rc.runner,
+        clear_screen=rc.clear_screen,
+        progress=rc.progress,
+        restart_message=rc.restart_message,
+        restart_confirmation=rc.restart_confirmation,
+        confirm_restart=rc.confirm_restart,
+        restart_delay=rc.restart_delay,
+        restart_floor=rc.restart_floor,
+    )
+    return outcome == "stop", last_selected_branch

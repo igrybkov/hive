@@ -18,10 +18,11 @@ set -g set-titles on
 set -g status-left "#S "
 set -g window-status-format "#I:#W"
 set -g window-status-current-format "#[bold]#I:#W"
-bind -n M-a run-shell "/opt/hive pane new"
-bind -n M-A run-shell "/opt/hive tab agents"
+bind -n M-n display-popup -E -d "#{pane_current_path}" -- /opt/hive pane new
+bind -n M-A display-popup -E -d "#{pane_current_path}" -- /opt/hive tab agents
 bind -n M-S display-popup -E -d "#{pane_current_path}" -T shell -- /opt/hive wt exec --here -- /bin/zsh
 bind -n M-m display-popup -E -w 80% -h 80% -T hive -- /opt/hive status --toggle
+bind -n M-W display-popup -E -d "#{pane_current_path}" -T shell -- /opt/hive wt exec --worktree - -- /bin/zsh
 """  # noqa: E501
 
 
@@ -32,6 +33,7 @@ bind -n M-m display-popup -E -w 80% -h 80% -T hive -- /opt/hive status --toggle
         ("Alt Shift a", "M-A"),
         ("Ctrl a", "C-a"),
         ("Alt Shift s", "M-S"),
+        ("Alt Shift w", "M-W"),
     ],
 )
 def test_tmux_key_table(zellij_key, expected):

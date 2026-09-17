@@ -69,6 +69,13 @@ def control_sock(session: str) -> Path:
     return session_sock_dir(session) / "control.sock"
 
 
+def agents_layout_file(session: str) -> Path:
+    """Where the session's live `agents_layout` override (G2) is written --
+    a small text file, not a socket, since `hive pane new` reads it from a
+    separate process that may run with no control plane up at all."""
+    return session_sock_dir(session) / "agents_layout"
+
+
 def layouts_dir() -> Path:
     return xdg_state_home() / "hive" / "layouts"
 

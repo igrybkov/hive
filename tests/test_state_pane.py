@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hive_cli.state.pane_state import (
     ICONS,
     STATUSES,
@@ -17,8 +19,26 @@ from hive_cli.state.pane_state import (
     compose_title,
     label_for,
     next_free_pane_id,
+    pane_hive_id,
     title_for,
 )
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("c2: Bohdan", 2),
+        ("c2: Bohdan [claude]", 2),
+        ("c12", 12),
+        ("hold: c2: Bohdan", 2),  # tmux's suspended-pane title (commands/pane.py:hold)
+        ("hold: c2", 2),
+        ("hold: hive run --restart", None),  # a hold pane with no HIVE_PANE_ID env
+        ("hive", None),
+        ("", None),
+    ],
+)
+def test_pane_hive_id_parses_zellij_and_tmux_titles(title, expected):
+    assert pane_hive_id(title) == expected
 
 
 def _title(**overrides) -> str:

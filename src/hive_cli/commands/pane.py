@@ -62,7 +62,8 @@ def new(
     """Create a new agent pane.
 
     Splits into the target tab if it has room (zellij.agents_per_tab), else
-    opens a fresh one-pane agents tab. Prints the new pane's id.
+    opens a fresh, fully-provisioned agents tab (idle placeholders fill the
+    rest of the slots). Prints the new pane's id.
 
     Examples:
         hive pane new                    # split an agent pane into this tab
@@ -198,6 +199,31 @@ def restart(id: Annotated[str, Parameter(help="Pane id.")]):
     if not client.request(paths.pane_sock(session_name, id), "restart"):
         error(f"No live agent pane: {id}")
         sys.exit(1)
+
+
+@pane_app.command
+def layout(
+    mode: Annotated[str | None, Parameter(help="split, stacked, or tabs.")] = None,
+):
+    """Show or set this session's live agent-pane layout mode.
+
+    With no argument, prints the effective mode (the live override if one
+    was set, else zellij.agents_layout from config). With one, changes it
+    for the rest of the session -- affects only agents created from now on,
+    never panes already open.
+
+    Examples:
+        hive pane layout            # print the current mode
+        hive pane layout stacked    # switch to Zellij-stacked agent panes
+    """
+    mux = _require_mux()
+    if mode is None:
+        print(session.get_agents_layout(mux=mux))
+        return
+    try:
+        print(session.set_agents_layout(mode, mux=mux))
+    except HiveError as exc:
+        _die(exc)
 
 
 def _wait_for_enter() -> None:

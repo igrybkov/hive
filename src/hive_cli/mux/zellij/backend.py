@@ -87,6 +87,7 @@ def _new_pane_options(
     focus: bool,
     floating: bool,
     suspended: bool,
+    stacked: bool,
     width: str | None,
     height: str | None,
 ) -> list[str]:
@@ -101,6 +102,8 @@ def _new_pane_options(
         opts.append("--close-on-exit")
     if suspended:
         opts.append("--start-suspended")
+    if stacked:
+        opts.append("--stacked")
     if width:
         opts += ["--width", width]
     if height:
@@ -159,6 +162,14 @@ class ZellijMux:
     def rename_tab(self, tab_id: str, name: str) -> None:
         _run(["zellij", "action", "rename-tab", "--tab-id", tab_id, name])
 
+    def resume_pane(self, pane_id: str) -> None:
+        """Byte 13 (carriage return) rather than `write-chars "\\r"`: a raw
+        byte value sidesteps any shell/argv quoting question for a control
+        character. Zellij's `start_suspended` resume check matches on the
+        raw input bytes (carriage return, newline, or space all qualify) --
+        13 alone is unambiguous."""
+        _run(["zellij", "action", "write", "--pane-id", pane_id, "13"])
+
     def current_tab_id(self) -> str | None:
         data = _json(_run(["zellij", "action", "current-tab-info", "--json"]))
         if isinstance(data, dict) and data.get("tab_id") is not None:
@@ -177,6 +188,7 @@ class ZellijMux:
         focus: bool = True,
         floating: bool = False,
         suspended: bool = False,
+        stacked: bool = False,
         width: str | None = None,
         height: str | None = None,
     ) -> str | None:
@@ -190,6 +202,7 @@ class ZellijMux:
             focus=focus,
             floating=floating,
             suspended=suspended,
+            stacked=stacked,
             width=width,
             height=height,
         )

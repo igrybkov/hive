@@ -25,7 +25,7 @@ def test_session_spec_frozen_and_hashable_with_defaults():
     session = SessionSpec(name="s", tabs=())
     assert session.options == (
         ("stacked_resize", "false"),
-        ("auto_layout", "false"),
+        ("auto_layout", "true"),
     )
     assert session.keybinds == KeybindSpec()
     assert hash(session) == hash(SessionSpec(name="s", tabs=()))

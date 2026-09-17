@@ -8,10 +8,13 @@ produced before F0; see compose_title.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 SCHEMA = 1
+
+_PANE_TITLE_ID_RE = re.compile(r"^(?:hold: )?c(\d+)(?::|$)")
 
 STATUSES = (
     "selecting",
@@ -161,3 +164,15 @@ def next_free_pane_id(taken: list[int]) -> int:
 def label_for(pane_id: int, labels: list[str]) -> str:
     """The configured label for pane number ``pane_id`` (1-based), or ``""``."""
     return labels[pane_id - 1] if 0 < pane_id <= len(labels) else ""
+
+
+def pane_hive_id(title: str) -> int | None:
+    """Parse the `HIVE_PANE_ID` a layout pane was given from its `cN[: label]`
+    title (agents_tab names panes this way before `hive run` ever starts and
+    registers a socket -- a `start_suspended` pane has no live state yet).
+    The optional `"hold: "` prefix matches the tmux backend's suspended-pane
+    title (`commands/pane.py:hold`'s `_hold_identity`), which carries the
+    same `cN[: label]` identity behind that marker instead of in front of it.
+    """
+    m = _PANE_TITLE_ID_RE.match(title)
+    return int(m.group(1)) if m else None

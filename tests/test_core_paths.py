@@ -55,3 +55,11 @@ def test_pane_sock_sanitizes_tmux_window_sigil(monkeypatch):
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/tmp/hvabc")
     assert paths.pane_sock("myrepo", "@3").name == "w3.sock"
+
+
+def test_agents_layout_file_lives_in_session_sock_dir(monkeypatch):
+    from hive_cli.core import paths
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/tmp/hvabc")
+    result = paths.agents_layout_file("myrepo")
+    assert result == paths.session_sock_dir("myrepo") / "agents_layout"

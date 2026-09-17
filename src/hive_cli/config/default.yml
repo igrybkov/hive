@@ -165,18 +165,31 @@ zellij:
   session_name: "{repo}"
   # Agent panes in the "agent" layout's tab: 1 or 2.
   agents_per_tab: 2
-  # Where the status board sits in the "agent" layout's tab: right, bottom, none.
-  control_plane: "right"
+  # Where the status board lives: right or bottom nest it into the agents
+  # tab; none omits it; tab (this default) gives it its own dedicated first
+  # tab (full, uncompacted), with agents starting at tab 2.
+  control_plane: "tab"
+  # Starting arrangement for on-demand agent panes: split (side by side,
+  # this default), stacked (Zellij pane stacking; falls back to split when
+  # control_plane is "right" -- see docs), or tabs (never split -- once
+  # idle slots run out, every further agent opens a new tab, regardless of
+  # agents_per_tab). Switchable live for the rest of a session with the
+  # control plane's `L` hotkey or `hive pane layout <mode>`; this is only
+  # where a fresh session starts.
+  agents_layout: "split"
   # Hotkeys shipped inside the rendered session file (never touches the
   # user's own Zellij config). Set a key to null to disable just that one
-  # binding, or enabled: false to disable all of them.
+  # binding, or enabled: false to disable all of them. new_agent_pane is the
+  # one deliberate exception to "never touches the user's config": it
+  # replaces Zellij's own default Alt+n ("new pane") binding.
   keybinds:
     enabled: true
-    new_agent_pane: "Alt a"
+    new_agent_pane: "Alt n"
     new_agent_tab: "Alt Shift a"
     floating_shell: "Alt Shift s"
     control_plane: "Alt m"
-  # Command the floating-shell hotkey runs; null uses $SHELL.
+    worktree_shell: "Alt Shift w"
+  # Command the floating-shell/worktree-shell hotkeys run; null uses $SHELL.
   floating_shell_command: null
   # Labels for agent panes c1..c16, in pane-number order. A `hive run`
   # started on demand (outside the layout) takes the first free pane number

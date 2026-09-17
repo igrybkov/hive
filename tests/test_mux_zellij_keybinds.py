@@ -11,13 +11,15 @@ from hive_cli.mux.zellij.keybinds import render
 GOLDEN = """\
 keybinds {
     shared_except "locked" {
-        bind "Alt a" {
+        bind "Alt n" {
             Run "/opt/hive" "pane" "new" {
+                floating true
                 close_on_exit true
             }
         }
         bind "Alt Shift a" {
             Run "/opt/hive" "tab" "agents" {
+                floating true
                 close_on_exit true
             }
         }
@@ -35,6 +37,13 @@ keybinds {
                 close_on_exit true
                 width "80%"
                 height "80%"
+            }
+        }
+        bind "Alt Shift w" {
+            Run "/opt/hive" "wt" "exec" "--worktree" "-" "--" "/bin/zsh" {
+                floating true
+                name "shell"
+                close_on_exit true
             }
         }
     }

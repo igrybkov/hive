@@ -227,6 +227,18 @@ class TestZellijMuxNewPane:
             "echo hi",
         ]
 
+    def test_new_pane_stacked_passes_flag(self, fake_proc):
+        """G2: `stacked=True` adds a pane to the target's Zellij stack
+        instead of splitting -- `zellij action new-pane --stacked`."""
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_5\n")
+        ZellijMux().new_pane(["claude"], stacked=True)
+        assert "--stacked" in fake_proc.calls[-1]
+
+    def test_new_pane_not_stacked_by_default(self, fake_proc):
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_5\n")
+        ZellijMux().new_pane(["claude"])
+        assert "--stacked" not in fake_proc.calls[-1]
+
     def test_new_pane_floating_has_no_direction(self, fake_proc):
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_6\n")
         ZellijMux().new_pane(["sh"], floating=True)

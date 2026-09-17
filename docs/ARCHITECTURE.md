@@ -51,7 +51,8 @@ hive_cli/
            errors.py     HiveError, ProcError
            models.py     shared dataclasses
   config/  schema.py settings.py loader.py merge.py runtime.py   (loader finds the project root by walking up to .git — no spawn)
-  state/   pane_state.py PaneState, compose_title, compose_tab_name
+  state/   pane_state.py PaneState, compose_title, compose_tab_name, pane_hive_id
+           session_layout.py   AGENTS_LAYOUTS, read/write_agents_layout (G2 live agents_layout override)
            protocol.py   NDJSON ops (get/set/subscribe/restart/stop/ping/call), encode/decode
            server.py     PaneStateServer (hive run)          client.py  send/get_state/set_fields/list_pane_sockets
   git/     repo.py worktree.py status.py github.py analysis.py   (facts + effects on git/gh; no prompts, no prints)
@@ -715,10 +716,10 @@ to `new_agent_pane`. All four fixes are in `services/session.py` unless noted:
 - **`layout/model.PaneSpec` gained one level of nesting** (`children`,
   `direction`): a non-empty `children` makes a `PaneSpec` a split container
   instead of a leaf. `agents_tab`'s `control="right"` uses it to nest "hive"
-  under the *last* agent pane's own column (that pane on top, "hive" at a
-  fixed `size="8"` on the bottom) instead of giving it a separate full-height
-  30%-wide column — the column now splits evenly with the other agent
-  pane(s), matching what `control="none"` already gave them.
+  under the *last* agent pane's own column (that pane on top, "hive" at the
+  bottom) instead of giving it a separate full-height 30%-wide column — the
+  column now splits evenly with the other agent pane(s), matching what
+  `control="none"` already gave them.
   `mux/zellij/kdl.py:render_pane` recurses into `children` (no `name`
   attribute on a container node, since Zellij pane names are for leaves).
   `mux/tmux/backend.py` has no native nested layout, so nesting is realized
@@ -731,3 +732,19 @@ to `new_agent_pane`. All four fixes are in `services/session.py` unless noted:
   only supports a container as the *last* element of the list it's in;
   `layout/tabs.py`'s bundled tool tabs (`teams`, `shell`, `workflow`, `git`,
   `tests`, `nvim`) were deliberately left flat, not revisited.
+
+  This nested "hive" pane was originally given a *fixed* `size="8"` (rows),
+  not a percentage. Found live (2026-09-11): closing the sibling agent pane
+  left "hive" alone in that container needing to grow into the freed space,
+  which it can't do at a fixed size — this is exactly the pattern behind a
+  known Zellij panic in its screen thread on `ClosePane`
+  (zellij-org/zellij#4880), and was seen to take the whole session's pane
+  state down, not just the nested container. Changed back to a percentage
+  (`size="25%"`, the same kind of value the old un-nested 30%-wide column
+  used) so Zellij can always resize it. `control="bottom"` had the exact
+  same fixed-`size="8"` risk (a flat sibling of the agent panes, not
+  nested, but the same "fixed pane must grow when a sibling closes"
+  shape) and got the same `size="25%"` fix, plus one more change: it's
+  `panes.insert(0, ...)` now, not `.append(...)` — "hive" sits before the
+  agent panes in the flat list, not after, so a newly split-in agent pane
+  (always added after the existing ones) can never land adjacent to it.

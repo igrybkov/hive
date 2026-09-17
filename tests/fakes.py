@@ -57,6 +57,9 @@ class FakeMux:
     def rename_tab(self, tid, name):
         self._rec("rename_tab", tid, name)
 
+    def resume_pane(self, pid):
+        self._rec("resume_pane", pid)
+
     def new_pane(self, argv, **kw):
         self._rec("new_pane", tuple(argv), **kw)
         self._next += 1

@@ -33,6 +33,7 @@ from ...services import aio
 from ...services import session as session_service
 from ...services import watch as watch_service
 from ...state.pane_state import PaneState, compose_tab_name
+from ...state.session_layout import AGENTS_LAYOUTS
 from . import model
 from .screens import ConfirmScreen, DetailScreen, HelpScreen, TabPickerScreen
 
@@ -42,6 +43,7 @@ HELP_TEXT = "\n".join(
         "n      New agent pane",
         "t      Agents tab",
         "T      Tool tab",
+        "L      Agent-pane layout (split/stacked/tabs)",
         "f      Shell here",
         "x      Close pane",
         "r      Restart pane",
@@ -59,6 +61,7 @@ HELP_TEXT = "\n".join(
 # ourselves keeps that call readable.
 _COLUMNS = (
     ("#", "id"),
+    ("pane", "pane"),
     ("agent", "agent"),
     ("worktree", "worktree"),
     ("status", "status"),
@@ -74,6 +77,7 @@ class ControlPlaneApp(App):
         ("n", "new_agent", "New agent"),
         ("t", "new_agents_tab", "Agents tab"),
         ("T", "tool_tab", "Tool tab"),
+        ("L", "agents_layout", "Layout"),
         ("f", "floating_shell", "Shell here"),
         ("x", "close_pane", "Close"),
         ("r", "restart_pane", "Restart"),
@@ -151,7 +155,12 @@ class ControlPlaneApp(App):
         ):
             await self._reduce(event)
             self.rows = model.build_rows(
-                self._states, self._panes, self._facts, self._tasks, now=self._now
+                self._states,
+                self._panes,
+                self._facts,
+                self._tasks,
+                now=self._now,
+                own_pane_id=self._mux.own_pane_id(),
             )
 
     async def _reduce(self, event: watch_service.SessionEvent) -> None:
@@ -206,7 +215,8 @@ class ControlPlaneApp(App):
 
     def _paint_row(self, table: DataTable, pane_id: str, row: model.PaneRow) -> bool:
         cells = (
-            str(row.hive_pane_id),
+            str(row.hive_pane_id) if row.hive_pane_id else "—",
+            model.name_cell(row),
             row.agent,
             row.worktree,
             model.status_cell(row, now=self._now),
@@ -250,7 +260,24 @@ class ControlPlaneApp(App):
             await aio.call(self._mux.focus_pane, pane_id)
 
     async def action_new_agent(self) -> None:
-        await aio.call(self._session_fns.new_agent_pane, mux=self._mux)
+        """Targets the selected row's tab/pane, not Zellij's ambient current
+        tab -- pressing 'n' while looking at the control plane means that
+        "current tab" is always the control plane's own home tab, which has
+        nothing to do with whatever row is highlighted (G1). Only an agent
+        row's tab is used this way: G0 made bare/tool-pane rows (shell,
+        lazygit, ...) selectable too, and splitting a new agent into one of
+        those tabs would break its fixed layout -- selecting one instead
+        falls back to `current_tab_id` (the tab the control plane's own
+        pane is physically in), same as having nothing selected at all."""
+        pane_id = self._selected_pane_id()
+        row = self.rows.get(pane_id) if pane_id is not None else None
+        tab_id = row.tab_id if row is not None and row.hive_pane_id != 0 else None
+        await aio.call(
+            self._session_fns.new_agent_pane,
+            mux=self._mux,
+            tab_id=tab_id,
+            prefer_pane_id=pane_id,
+        )
 
     async def action_new_agents_tab(self) -> None:
         await aio.call(self._session_fns.open_tab, "agents", mux=self._mux)
@@ -264,6 +291,17 @@ class ControlPlaneApp(App):
     async def _open_tool_tab(self, name: str | None) -> None:
         if name:
             await aio.call(self._session_fns.open_tab, name, mux=self._mux)
+
+    def action_agents_layout(self) -> None:
+        """Picks the live agents_layout override (G2) -- affects only
+        agents created from now on, never panes already open."""
+        self.push_screen(TabPickerScreen(list(AGENTS_LAYOUTS)), self._set_agents_layout)
+
+    async def _set_agents_layout(self, mode: str | None) -> None:
+        if mode:
+            await aio.call(
+                self._session_fns.set_agents_layout, mode, session=self._session
+            )
 
     async def action_floating_shell(self) -> None:
         worktree = self._selected_worktree()
@@ -351,7 +389,12 @@ class ControlPlaneApp(App):
             return
         self._facts = await aio.call(self._facts_fn)
         self.rows = model.build_rows(
-            self._states, self._panes, self._facts, self._tasks, now=self._now
+            self._states,
+            self._panes,
+            self._facts,
+            self._tasks,
+            now=self._now,
+            own_pane_id=self._mux.own_pane_id(),
         )
 
     def action_help(self) -> None:

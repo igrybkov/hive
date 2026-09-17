@@ -20,6 +20,7 @@ from hive_cli.mux.tmux.backend import TmuxMux
 from hive_cli.services import session
 from hive_cli.state.pane_state import PaneState
 from hive_cli.state.server import PaneStateServer
+from hive_cli.state.session_layout import write_agents_layout
 
 
 def _start(mux, name):
@@ -253,21 +254,11 @@ def test_start_calls_ensure_session_each_restart_iteration():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("title", "expected"),
-    [
-        ("c2: Bohdan", 2),
-        ("c2: Bohdan [claude]", 2),
-        ("c12", 12),
-        ("hold: c2: Bohdan", 2),  # tmux's suspended-pane title (commands/pane.py:hold)
-        ("hold: c2", 2),
-        ("hold: hive run --restart", None),  # a hold pane with no HIVE_PANE_ID env
-        ("hive", None),
-        ("", None),
-    ],
-)
-def test_pane_hive_id_parses_zellij_and_tmux_titles(title, expected):
-    assert session._pane_hive_id(title) == expected
+def test_pane_hive_id_reexported_from_state_pane_state():
+    """Full regex coverage now lives in tests/test_state_pane.py, next to
+    where `pane_hive_id` itself lives (state/pane_state.py); this just
+    proves `services.session` still has a working `_pane_hive_id` alias."""
+    assert session._pane_hive_id("c2: Bohdan") == 2
 
 
 def _pane(
@@ -330,6 +321,11 @@ def test_new_agent_pane_splits_when_room(hive_path):
 
 
 def test_new_agent_pane_opens_tab_when_full(hive_path):
+    """The fresh tab is provisioned with every `agents_per_tab` slot up
+    front (the second an idle `start_suspended` placeholder), not one pane
+    now and a live split later -- a live `new-pane --direction right` split
+    has no way to request an even ratio, unlike a static KDL layout's
+    unsized siblings."""
     mux = FakeMux(session="s", panes=[_pane("3", "t1"), _pane("4", "t1")])
     with _live("s", "3", 1), _live("s", "4", 2):
         session.new_agent_pane(
@@ -341,16 +337,22 @@ def test_new_agent_pane_opens_tab_when_full(hive_path):
     assert len(calls) == 1
     spec = calls[0][1][0]
     assert spec.name == "agents"
-    assert len(spec.panes) == 1
+    assert len(spec.panes) == 2
     assert spec.panes[0].env == (("HIVE_PANE_ID", "3"), ("HIVE_PANE_LABEL", "Chris"))
+    assert spec.panes[0].suspended is False
+    assert spec.panes[1].env == (("HIVE_PANE_ID", "4"), ("HIVE_PANE_LABEL", "Dmytro"))
+    assert spec.panes[1].suspended is True
 
 
 def test_new_agent_pane_reuses_idle_suspended_pane(hive_path):
     """A `start_suspended` pane from the initial agents_tab (c2) has no live
     hive socket yet -- only its layout-assigned title identifies it. Pressing
-    "New agent" with that idle slot sitting there should focus/start it, not
-    duplicate it (the pre-fix bug: a 3rd pane split into an already-full
-    2-agent tab, handed c2's own HIVE_PANE_ID again)."""
+    "New agent" with that idle slot sitting there should resume it in place,
+    not duplicate it (the pre-fix bug: a 3rd pane split into an already-full
+    2-agent tab, handed c2's own HIVE_PANE_ID again) -- and not just focus
+    it either: `resume_pane` (the Enter keystroke that starts its pending
+    command) must follow the focus, so the slot this hands back is actually
+    running, not merely in view."""
     mux = FakeMux(
         session="s",
         panes=[
@@ -366,7 +368,131 @@ def test_new_agent_pane_reuses_idle_suspended_pane(hive_path):
     assert mux.named("new_pane") == []
     assert mux.named("new_tab") == []
     assert mux.named("focus_pane") == [("focus_pane", ("4",), {})]
+    assert mux.named("resume_pane") == [("resume_pane", ("4",), {})]
+    assert mux.calls.index(mux.named("focus_pane")[0]) < mux.calls.index(
+        mux.named("resume_pane")[0]
+    )
     assert pane_id == "4"
+
+
+def test_new_agent_pane_prefers_named_idle_pane(hive_path):
+    """Two idle slots in the same tab; `prefer_pane_id` picks the second,
+    not the first-found (G1: the control plane's `n` names exactly the row
+    the user selected)."""
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("4", "t1", title="c1: Anton", suspended=True),
+            _pane("5", "t1", title="c2: Bohdan", suspended=True),
+        ],
+    )
+    pane_id = session.new_agent_pane(
+        mux=mux,
+        prefer_pane_id="5",
+        settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2)),
+    )
+    assert pane_id == "5"
+    assert mux.named("focus_pane") == [("focus_pane", ("5",), {})]
+    assert mux.named("resume_pane") == [("resume_pane", ("5",), {})]
+
+
+def test_new_agent_pane_prefer_falls_back_when_not_idle(hive_path):
+    """`prefer_pane_id` naming a pane that isn't idle (or not in `existing`
+    at all) doesn't break anything -- falls back to first-idle-found."""
+    mux = FakeMux(
+        session="s", panes=[_pane("4", "t1", title="c1: Anton", suspended=True)]
+    )
+    pane_id = session.new_agent_pane(
+        mux=mux,
+        prefer_pane_id="does-not-exist",
+        settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2)),
+    )
+    assert pane_id == "4"
+    assert mux.named("resume_pane") == [("resume_pane", ("4",), {})]
+
+
+def test_new_agent_pane_tabs_mode_never_splits(hive_path):
+    """G2: 'tabs' mode ignores agents_per_tab -- once idle slots are
+    exhausted, every further agent opens a new tab, never a split. Unlike
+    "split"/"stacked" mode, that fresh tab stays a genuine single pane --
+    "tabs" mode's whole point is one agent per tab."""
+    write_agents_layout("s", "tabs")
+    mux = FakeMux(session="s", panes=[_pane("3", "t1", title="c1: Anton")])
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+    assert mux.named("new_pane") == []
+    calls = mux.named("new_tab")
+    assert len(calls) == 1
+    spec = calls[0][1][0]
+    assert len(spec.panes) == 1
+
+
+def test_new_agent_pane_tabs_mode_still_reuses_idle_slot(hive_path):
+    """'tabs' mode only forbids *splitting* -- resuming an already-existing
+    idle pane in place doesn't add a pane to the tab, so it's still fine."""
+    write_agents_layout("s", "tabs")
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("3", "t1", title="c1: Anton"),
+            _pane("4", "t1", title="c2: Bohdan", suspended=True),
+        ],
+    )
+    with _live("s", "3", 1):
+        pane_id = session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+    assert pane_id == "4"
+    assert mux.named("new_tab") == []
+    assert mux.named("resume_pane") == [("resume_pane", ("4",), {})]
+
+
+def test_new_agent_pane_stacked_mode_passes_stacked_to_new_pane(hive_path):
+    """No `direction` alongside `stacked` -- Zellij's own --stacked flag
+    isn't documented as pairing with a direction, so this doesn't guess."""
+    write_agents_layout("s", "stacked")
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+    calls = mux.named("new_pane")
+    assert len(calls) == 1
+    assert calls[0][2]["stacked"] is True
+    assert calls[0][2]["direction"] == ""
+
+
+def test_new_agent_pane_split_mode_is_default(hive_path):
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_per_tab=2))
+        )
+    calls = mux.named("new_pane")
+    assert calls[0][2]["stacked"] is False
+    assert calls[0][2]["direction"] == "right"
+
+
+def test_get_agents_layout_defaults_to_settings(hive_path):
+    mux = FakeMux(session="s")
+    mode = session.get_agents_layout(
+        mux=mux, settings=HiveSettings(zellij=ZellijConfig(agents_layout="stacked"))
+    )
+    assert mode == "stacked"
+
+
+def test_set_agents_layout_persists_and_get_reflects_it(hive_path):
+    mux = FakeMux(session="s")
+    session.set_agents_layout("tabs", mux=mux)
+    assert session.get_agents_layout(mux=mux) == "tabs"
+
+
+def test_set_agents_layout_rejects_unknown_mode(hive_path):
+    mux = FakeMux(session="s")
+    with pytest.raises(HiveError):
+        session.set_agents_layout("bogus", mux=mux)
 
 
 def test_new_agent_pane_no_focus_skips_reuse_focus_call(hive_path):

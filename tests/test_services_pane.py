@@ -6,9 +6,9 @@ that it's a cross-module service function. run_loop/`_restart_loop`/
 `_single_run` are new: the restart-loop and single-run bodies of
 commands/exec_runner.py's run_in_worktree, with printing extracted into
 clear_screen/progress/confirm_restart callbacks and Zellij pane-renaming
-extracted into an on_branch_selected callback (`select_for_iteration` and
-`pause_and_retry`, used by `_restart_loop`, live in services/restart.py
-alongside `RestartFloor` -- self-contained, no `PaneContext` dependency).
+extracted into an on_branch_selected callback (`select_for_iteration`,
+used by `_restart_loop`, lives in services/restart.py alongside
+`RestartFloor` -- self-contained, no `PaneContext` dependency).
 run_in_worktree itself is still covered end-to-end via the CLI in
 test_run.py/test_wt.py/test_wt_cli.py -- these tests exercise run_loop
 directly with fake callbacks/pick functions.
@@ -52,10 +52,9 @@ from hive_cli.state.server import PaneStateServer
 def _no_restart_floor_sleep(monkeypatch):
     """The real RestartFloor sleeps 1-5 s after a fast exit; never in tests.
 
-    Also covers `pause_and_retry`'s throttle sleep (a non-blocking
-    `confirm_retry` falls back to a 0.5 s sleep so it can't spin) and
-    `restart_delay`'s `time.sleep` -- both live in services/restart.py
-    alongside RestartFloor now, so one patch target covers all three.
+    Also covers `restart_delay`'s `time.sleep` -- both live in
+    services/restart.py alongside RestartFloor, so one patch target covers
+    both.
     """
     monkeypatch.setattr("hive_cli.services.restart.time.sleep", lambda _s: None)
 
@@ -127,11 +126,11 @@ extra_dirs:
 
 
 def _fake_pick_sequence(*results):
-    """A `pick` stand-in that returns each of results in turn, then repeats last."""
+    """A `pick` stand-in that returns each of results in turn."""
     results = list(results)
 
     def pick(worktree, last_selected_branch=None, **kwargs):
-        return results.pop(0) if len(results) > 1 else results[0]
+        return results.pop(0) if results else results[-1]
 
     return pick
 
@@ -216,47 +215,29 @@ class TestRunLoopSingle:
         assert cleared == [True]
 
 
-def _raise_keyboard_interrupt() -> None:
-    raise KeyboardInterrupt
-
-
 class TestRunLoopRestart:
-    def test_restart_loop_pauses_and_retries_on_cancelled_pick(self):
-        """A single cancelled reselect pauses (confirm_retry) and tries again --
-        it does not end the loop by itself; see services/pane.py:_restart_loop."""
+    def test_restart_loop_runs_until_pick_fails(self):
         run_count = []
-        retry_calls = []
 
         def runner(cmd):
             run_count.append(cmd)
             return 0
 
-        def confirm_retry():
-            retry_calls.append(True)
-            if len(retry_calls) >= 2:
-                raise KeyboardInterrupt
-
         result = run_loop(
             ["claude"],
-            _fake_pick_sequence(
-                (True, "main"), (False, None), (True, "main"), (False, None)
-            ),
+            _fake_pick_sequence((True, "main"), (True, "main"), (False, None)),
             runner=runner,
             restart=True,
             worktree="main",
-            confirm_retry=confirm_retry,
-            ctx=PaneContext(None, "", "", None, _FakeStopServer()),
         )
 
         assert result == 0
-        assert run_count == [["claude"], ["claude"]]
-        assert len(retry_calls) == 2
+        assert len(run_count) == 2
 
-    def test_restart_loop_ends_without_retry_when_stop_requested(self):
-        """An explicit "stop" over the pane socket skips the retry pause --
-        the cancelled pick just ends the loop, same as before this pause
-        existed."""
-        retry_calls = []
+    def test_stop_requested_ends_loop_on_a_cancelled_pick(self):
+        """An explicit "stop" over the pane socket, seen on the next
+        iteration's cancelled pick, ends the loop the same as any other
+        cancelled reselect -- there's no separate pause state to skip."""
         ctx = PaneContext(None, "", "", None, _FakeStopServer(stopped=True))
 
         result = run_loop(
@@ -265,71 +246,34 @@ class TestRunLoopRestart:
             runner=lambda cmd: 0,
             restart=True,
             worktree="main",
-            confirm_retry=lambda: retry_calls.append(True),
             ctx=ctx,
         )
 
         assert result == 0
-        assert retry_calls == []
 
-    def test_stray_interrupt_between_runs_pauses_inside_a_pane(self):
-        """A KeyboardInterrupt that isn't the picker's own clean cancel --
-        landing in the bookkeeping between one run ending and the next
-        picker starting -- pauses too when a pane socket is live, instead of
-        silently ending the loop (see _restart_loop's docstring)."""
-        run_count = []
-        retry_calls = []
+    def test_keyboard_interrupt_inside_a_pane_stops_like_a_bare_terminal(self):
+        """A KeyboardInterrupt from the running command ends the loop and lets
+        the process actually exit -- inside a live pane exactly like a bare
+        terminal -- so Zellij's own exited-pane handling (Enter re-runs,
+        Ctrl+C closes) takes over instead of hive pausing internally."""
+        messages = []
         ctx = PaneContext(None, "", "", None, _FakeStopServer())
 
         def runner(cmd):
-            run_count.append(cmd)
-            if len(run_count) == 1:
-                return 0
-            raise KeyboardInterrupt  # a stray signal, not the picker's cancel
-
-        def confirm_retry():
-            retry_calls.append(True)
-            raise KeyboardInterrupt  # the user's real second Ctrl+C
-
-        result = run_loop(
-            ["claude"],
-            _fake_pick_sequence((True, "main"), (True, "main")),
-            runner=runner,
-            restart=True,
-            worktree="main",
-            confirm_retry=confirm_retry,
-            ctx=ctx,
-        )
-
-        assert result == 0
-        assert run_count == [["claude"], ["claude"]]
-        assert retry_calls == [True]
-
-    def test_stray_interrupt_outside_a_pane_stops_immediately(self):
-        """The same stray interrupt outside a pane (no live socket, e.g. a
-        bare `hive run --restart` in a plain terminal) still just quits --
-        there is nothing to pause for."""
-        run_count = []
-        retry_calls = []
-
-        def runner(cmd):
-            run_count.append(cmd)
-            if len(run_count) == 1:
-                return 0
             raise KeyboardInterrupt
 
         result = run_loop(
             ["claude"],
-            _fake_pick_sequence((True, "main"), (True, "main")),
+            _fake_pick_sequence((True, "main")),
             runner=runner,
             restart=True,
             worktree="main",
-            confirm_retry=lambda: retry_calls.append(True),
+            progress=messages.append,
+            ctx=ctx,
         )
 
         assert result == 0
-        assert run_count == [["claude"], ["claude"]]
-        assert retry_calls == []
+        assert any("Stopped" in m for m in messages)
 
     def test_restart_confirmation_calls_confirm_restart_each_time(self):
         confirm_calls = []
@@ -341,7 +285,6 @@ class TestRunLoopRestart:
             restart_confirmation=True,
             worktree="main",
             confirm_restart=lambda: confirm_calls.append(True),
-            confirm_retry=_raise_keyboard_interrupt,
         )
 
         assert confirm_calls == [True]
@@ -357,7 +300,6 @@ class TestRunLoopRestart:
             worktree="main",
             restart_message="custom restart message",
             progress=messages.append,
-            confirm_retry=_raise_keyboard_interrupt,
         )
 
         assert any("custom restart message" in m for m in messages)
@@ -761,7 +703,6 @@ class TestRestartFloor:
             restart=True,
             worktree="main",
             restart_floor=RestartFloor(sleep=slept.append, clock=clock),
-            confirm_retry=_raise_keyboard_interrupt,
         )
 
         assert slept == [1, 2]

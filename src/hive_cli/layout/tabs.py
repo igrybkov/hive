@@ -37,11 +37,24 @@ def agents_tab(
     labels: list[str],
     first_id: int = 1,
     focus: bool = False,
+    stacked: bool = False,
 ) -> TabSpec:
     """n agent panes (1 or 2) plus, when control != "none", a status column.
 
     The first agent pane is not suspended; the rest are. Panes beyond
     `labels` get a bare "cN" name and no HIVE_PANE_LABEL.
+
+    `stacked` (G2) renders the *agent* panes as a Zellij stack instead of a
+    plain split. With `control="bottom"`, "hive" stays a full-width row
+    outside the stack (nested the other way round from `control="right"`
+    below: "hive" is the outer sibling, the stack of agent panes is the
+    inner one) -- otherwise toggling between agents would hide the status
+    board along with whichever agent was previously visible. With
+    `control="right"`, which nests "hive" into the *last* agent pane's own
+    column, `stacked` is ignored: folding a nested column into a stack
+    raises real questions about which stack member is "last" that v1
+    doesn't try to answer, so `control="right"` always renders as an
+    ordinary split, `stacked` or not.
     """
     panes: list[PaneSpec] = []
     for offset in range(n):
@@ -60,21 +73,52 @@ def agents_tab(
             )
         )
     if control == "bottom":
-        panes.append(
-            PaneSpec(
-                name="hive",
-                command=(hive, "status", "--watch", "--compact"),
-                size="8",
-            )
-        )
-    elif control == "right":
         hive_pane = PaneSpec(
-            name="hive", command=(hive, "status", "--watch", "--compact"), size="8"
+            name="hive",
+            command=(hive, "status", "--watch", "--compact"),
+            size="25%",
+        )
+        if stacked and len(panes) > 1:
+            # Stack the *agent* panes only -- "hive" stays a full-width,
+            # always-visible row rather than becoming a stack member that
+            # disappears whenever a different agent is selected. Nested
+            # exactly like control="right" nests "hive" below, just with
+            # "hive" as the outer sibling instead of the inner one.
+            panes = [
+                hive_pane,
+                PaneSpec(name="", command=(), children=tuple(panes), stacked=True),
+            ]
+        else:
+            # n=1: nothing to stack, so no container is introduced -- same
+            # flat shape as the unstacked case below.
+            #
+            # Inserted first, not appended last: agent panes always sit
+            # after it in the flat split, so a newly split-in agent pane can
+            # never land adjacent to "hive" and sandwich it between two
+            # agents. size is a percentage for the same reason as
+            # control="right" below -- a fixed row count can't grow when a
+            # sibling agent pane closes, which panics Zellij's screen thread
+            # on ClosePane (zellij-org/zellij#4880).
+            panes.insert(0, hive_pane)
+        # Either way, the *outer* TabSpec is an ordinary split: "hive" is
+        # always a direct, non-stacked sibling at this level -- true whether
+        # it's next to a stacked agent-pane group or a single flat pane.
+        stacked = False
+    elif control == "right":
+        stacked = False  # scope limitation, see docstring
+        hive_pane = PaneSpec(
+            name="hive", command=(hive, "status", "--watch", "--compact"), size="25%"
         )
         # Nested under the *last* agent pane's own column (a horizontal
         # split: agent pane on top, "hive" at the bottom) rather than its
         # own full-height column -- the column keeps splitting evenly with
         # the other agent pane(s), "hive" just takes the bottom slice of it.
+        # size must be a percentage, not a fixed row count: closing the
+        # sibling agent pane leaves "hive" alone in this container, and
+        # Zellij must be able to grow it to fill the freed space. A fixed
+        # size can't grow, which panics Zellij's screen thread on ClosePane
+        # (zellij-org/zellij#4880) and has been seen to take the whole
+        # session's pane state down with it, not just this container.
         panes[-1] = PaneSpec(
             name="",
             command=(),
@@ -82,7 +126,27 @@ def agents_tab(
             direction="horizontal",
         )
     direction = "horizontal" if control == "bottom" else "vertical"
-    return TabSpec(name="agents", panes=tuple(panes), direction=direction, focus=focus)
+    return TabSpec(
+        name="agents",
+        panes=tuple(panes),
+        direction=direction,
+        stacked=stacked,
+        focus=focus,
+    )
+
+
+def _control_plane_tab(hive: str) -> TabSpec:
+    """Dedicated first tab for `control_plane: "tab"`: the status board fills
+    the whole tab (no `--compact`, unlike the nested "right"/"bottom" pane,
+    which has to share space with an agent pane). Created eagerly alongside
+    the agents tab (both ship in the same session file, rendered before
+    Zellij ever starts -- there's no lazy on-demand step here) but not
+    focused: the agents tab is where a session actually starts working, so
+    it's the one active on attach, not this monitoring tab."""
+    return TabSpec(
+        name="control",
+        panes=(PaneSpec(name="hive", command=(hive, "status", "--watch")),),
+    )
 
 
 def _fish(script: str) -> tuple[str, ...]:
@@ -276,14 +340,32 @@ def resolve_tab(
 
 
 def session_spec(*, name: str, hive: str, settings: HiveSettings) -> SessionSpec:
-    """One tab: the configured agent panes plus a status column, plus keybinds."""
-    tab = agents_tab(
+    """The configured agent panes plus a status column, plus keybinds.
+
+    The initial render always follows `settings.zellij.agents_layout` (the
+    config default), never a live per-session override (G2) -- there is no
+    session yet for one to meaningfully belong to. The live override only
+    changes what happens to *further* on-demand agents, not this first tab.
+
+    `control_plane: "tab"` renders two tabs instead of one, both created
+    right away in the same session file (no on-demand step): a dedicated
+    "control" tab first, then the agents tab (built with `control="none"`,
+    since the status board no longer shares its space) -- the agents tab is
+    the one focused on attach, since that's where a session actually starts
+    working, not the monitoring tab. Every other `control_plane` value keeps
+    the single-tab shape, the status board (if any) nested inside the agents
+    tab itself.
+    """
+    dedicated_control = settings.zellij.control_plane == "tab"
+    agents = agents_tab(
         n=settings.zellij.agents_per_tab,
-        control=settings.zellij.control_plane,
+        control="none" if dedicated_control else settings.zellij.control_plane,
         hive=hive,
         labels=settings.zellij.pane_labels,
         focus=True,
+        stacked=settings.zellij.agents_layout == "stacked",
     )
+    tabs = (_control_plane_tab(hive), agents) if dedicated_control else (agents,)
     shell = settings.zellij.floating_shell_command or os.environ.get("SHELL", "/bin/sh")
     keybinds = keybind_spec(settings.zellij.keybinds, hive=hive, shell=shell)
-    return SessionSpec(name=name, tabs=(tab,), keybinds=keybinds)
+    return SessionSpec(name=name, tabs=tabs, keybinds=keybinds)

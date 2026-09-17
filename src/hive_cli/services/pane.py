@@ -314,20 +314,16 @@ def _restart_loop(
     clear_screen: Callable[[], None],
     progress: Callable[[str], None],
     confirm_restart: Callable[[], None],
-    confirm_retry: Callable[[], None],
     restart_floor: RestartFloor,
 ) -> int:
     """Re-select (or re-affirm) a worktree and re-run command until stopped.
 
-    Inside a pane (`ctx.server` set), only an explicit "stop" over the pane
-    socket ends the loop: a cancelled reselect, and a stray SIGINT between
-    runs (e.g. during `RestartFloor`'s backoff sleep, before the picker's
-    raw mode re-guards Ctrl+C), both just pause for Enter (`restart.pause_and_retry`,
-    see `restart.loop_step`) and retry -- otherwise the pane exits with
-    nothing running and no live socket left for the control plane to show,
-    indistinguishable from a crash. A real second Ctrl+C (or a non-blocking
-    `confirm_retry`, e.g. a test double) still stops it below; outside a
-    pane, with nothing to pause for, a caught interrupt is re-raised instead.
+    A cancelled reselect, an explicit "stop" over the pane socket, or a
+    KeyboardInterrupt (a real Ctrl+C, or a stray SIGINT landing in the
+    bookkeeping between one run ending and the next) all end the loop and
+    let the process actually exit -- so Zellij's own exited-pane handling
+    (frame shows the exit code; Enter re-runs the command, Ctrl+C closes
+    the pane) takes over, the same as any other command pane.
     """
     rc = restart.RestartConfig(
         command=command,
@@ -344,7 +340,6 @@ def _restart_loop(
         clear_screen=clear_screen,
         progress=progress,
         confirm_restart=confirm_restart,
-        confirm_retry=confirm_retry,
         restart_floor=restart_floor,
     )
     first_iteration = True
@@ -432,7 +427,6 @@ def run_loop(
     clear_screen: Callable[[], None] = _noop,
     progress: Callable[[str], None] = _noop,
     confirm_restart: Callable[[], None] = _noop,
-    confirm_retry: Callable[[], None] = _noop,
     ctx: PaneContext | None = None,
     restart_floor: RestartFloor | None = None,
 ) -> int:
@@ -466,8 +460,6 @@ def run_loop(
         progress: Called with a Rich-markup message to display.
         confirm_restart: Called (and expected to block) before each restart
             when restart_confirmation is set.
-        confirm_retry: Called (and expected to block) before retrying a
-            cancelled reselect in --restart mode (see `_restart_loop`).
         ctx: The pane context; opened here when None and always closed on
             return, so the pane socket disappears when the loop ends.
         restart_floor: Backoff applied after fast exits in --restart mode
@@ -507,7 +499,6 @@ def run_loop(
                 clear_screen=clear_screen,
                 progress=progress,
                 confirm_restart=confirm_restart,
-                confirm_retry=confirm_retry,
                 restart_floor=restart_floor or RestartFloor(),
             )
 

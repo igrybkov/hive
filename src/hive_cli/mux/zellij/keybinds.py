@@ -2,8 +2,10 @@
 
 Golden-tested byte-for-byte (tests/test_mux_zellij_keybinds.py). Wrapped in
 `shared_except "locked"` so the bindings still apply while a pane is
-locked-mode; never emits `clear-defaults` (zellij#4256: that would drop the
-user's own Alt+n/Alt+f bindings for the life of the session).
+locked-mode; never emits `clear-defaults` (zellij#4256: that would drop
+every other default binding -- e.g. Alt+f, arrow-key focus moves -- for the
+life of the session; a `bind` for a key hive's own config does list, like
+the default `new_agent_pane: "Alt n"`, still overrides just that one key).
 
 `_quote` mirrors `mux/zellij/kdl.py:kdl_string` (kept local, not imported, to
 avoid a `kdl -> keybinds -> kdl` cycle now that `kdl.py` calls `render` here).

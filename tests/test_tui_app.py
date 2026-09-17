@@ -62,7 +62,10 @@ def mux():
         PaneInfo("4", "t1", "", "", "", False, False, False),
     ]
     tabs = [TabInfo("t1", "agents", True)]
-    return FakeMux(session="test", panes=panes, tabs=tabs)
+    # pane_id="9": distinct from every agent pane id these tests use ("3",
+    # "4") -- build_rows (G0) excludes the mux's own_pane_id from the board,
+    # so reusing "3" here would silently drop the Anton/claude row.
+    return FakeMux(session="test", pane_id="9", panes=panes, tabs=tabs)
 
 
 @pytest.fixture
@@ -72,6 +75,7 @@ def session_fns():
         open_tab=Mock(return_value="tab1"),
         floating_shell=Mock(),
         restart_pane=session_service.restart_pane,
+        set_agents_layout=Mock(return_value="stacked"),
     )
 
 
@@ -102,7 +106,7 @@ class TestPushUpdatesCell:
                 ),
             )
             table = app.query_one(DataTable)
-            status_key = app._col_keys[3]
+            status_key = next(k for k in app._col_keys if k.value == "status")
             assert "busy" in str(table.get_cell("3", status_key))
 
 
@@ -164,6 +168,93 @@ class TestNCallsNewAgent:
             await pilot.press("n")
             await _wait_for(pilot, lambda: session_fns.new_agent_pane.called)
             session_fns.new_agent_pane.assert_called_once()
+
+
+class TestNTargetsSelectedRow:
+    """G1: 'n' must target the *selected row's* tab/pane, not Zellij's
+    ambient current tab -- proved here by making the two differ: t1 is the
+    mux's `current_tab_id()` (its only "active" tab), but the row selected
+    with 'down' belongs to t2."""
+
+    @pytest.fixture
+    def two_tab_servers(self):
+        srv1 = PaneStateServer(
+            paths.pane_sock("test", "3"),
+            PaneState(pane_id="3", hive_pane_id=1, tab_id="t1", agent="claude"),
+        )
+        srv2 = PaneStateServer(
+            paths.pane_sock("test", "5"),
+            PaneState(pane_id="5", hive_pane_id=2, tab_id="t2", agent="codex"),
+        )
+        srv1.start()
+        srv2.start()
+        yield srv1, srv2
+        srv1.close()
+        srv2.close()
+
+    @pytest.fixture
+    def two_tab_app(self, session_fns):
+        panes = [
+            PaneInfo("3", "t1", "", "", "", False, False, False),
+            PaneInfo("5", "t2", "", "", "", False, False, False),
+        ]
+        tabs = [TabInfo("t1", "agents", True), TabInfo("t2", "agents2", False)]
+        mux = FakeMux(session="test", pane_id="9", panes=panes, tabs=tabs)
+        return ControlPlaneApp(mux=mux, session="test", session_fns=session_fns)
+
+    async def test_selects_row_in_other_tab(
+        self, two_tab_servers, two_tab_app, session_fns
+    ):
+        assert two_tab_app._mux.current_tab_id() == "t1"  # sanity: not t2
+
+        async with two_tab_app.run_test(size=(120, 30)) as pilot:
+            await _wait_for(
+                pilot, lambda: two_tab_app.query_one(DataTable).row_count == 2
+            )
+            two_tab_app.query_one(DataTable).focus()
+            await pilot.press("down")  # row 0 is "3" (hive_pane_id=1); row 1 is "5"
+
+            await pilot.press("n")
+
+            await _wait_for(pilot, lambda: session_fns.new_agent_pane.called)
+            _name, _args, kwargs = session_fns.new_agent_pane.mock_calls[0]
+            assert kwargs["tab_id"] == "t2"
+            assert kwargs["prefer_pane_id"] == "5"
+
+    async def test_selecting_a_tool_pane_row_falls_back_to_current_tab(
+        self, session_fns
+    ):
+        """G0 made bare/tool-pane rows (shell, lazygit, ...) selectable;
+        splitting a new agent into one of those tabs would break its fixed
+        layout, so selecting one must not target its tab -- falls back to
+        `current_tab_id` exactly as if nothing were selected."""
+        srv = PaneStateServer(
+            paths.pane_sock("test", "3"),
+            PaneState(pane_id="3", hive_pane_id=1, tab_id="t1", agent="claude"),
+        )
+        srv.start()
+        try:
+            panes = [
+                PaneInfo("3", "t1", "", "", "", False, False, False),
+                PaneInfo("9", "t2", "lazygit", "", "", False, False, False),
+            ]
+            tabs = [TabInfo("t1", "agents", True), TabInfo("t2", "git", False)]
+            mux = FakeMux(session="test", pane_id="99", panes=panes, tabs=tabs)
+            app = ControlPlaneApp(mux=mux, session="test", session_fns=session_fns)
+
+            async with app.run_test(size=(120, 30)) as pilot:
+                await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 2)
+                app.query_one(DataTable).focus()
+                await pilot.press("down")  # row 0: "3" (agent); row 1: "9" (lazygit)
+
+                await pilot.press("n")
+
+                await _wait_for(pilot, lambda: session_fns.new_agent_pane.called)
+                _name, _args, kwargs = session_fns.new_agent_pane.mock_calls[0]
+                assert kwargs["tab_id"] is None
+                assert kwargs["prefer_pane_id"] == "9"
+        finally:
+            srv.close()
 
 
 class TestFilter:
@@ -267,6 +358,29 @@ class TestToolTab:
             await pilot.press("escape")
             await pilot.pause(0.2)
             session_fns.open_tab.assert_not_called()
+
+
+class TestAgentsLayout:
+    """G2: 'L' opens a mode picker and changes the live per-session
+    agents_layout override."""
+
+    async def test_pick_sets_layout(self, app, session_fns):
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.press("L")
+            await pilot.pause()
+            await pilot.press("enter")  # first item: AGENTS_LAYOUTS[0] == "split"
+            await _wait_for(pilot, lambda: session_fns.set_agents_layout.called)
+            session_fns.set_agents_layout.assert_called_once_with(
+                "split", session="test"
+            )
+
+    async def test_escape_cancels_without_setting(self, app, session_fns):
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.press("L")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            session_fns.set_agents_layout.assert_not_called()
 
 
 class TestFloatingShell:

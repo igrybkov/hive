@@ -48,6 +48,17 @@ class Mux(Protocol):
     def rename_tab(self, tab_id: str, name: str) -> None: ...
     def current_tab_id(self) -> str | None: ...
 
+    def resume_pane(self, pane_id: str) -> None:
+        """Start a pane's pending command: send Enter, the same keystroke a
+        person would press by hand. Zellij's own `start_suspended` panes
+        resume on Enter/Space/carriage-return natively; the tmux backend has
+        no such primitive, so its `suspended` panes always wrap the real
+        command in `hive pane hold` (F6), which blocks on reading a line
+        from stdin -- an injected Enter unblocks it the same way. Either
+        way this is the *only* way to make a pending pane's command actually
+        start without a human at the keyboard -- `focus_pane` alone just
+        moves the cursor there and leaves it dormant."""
+
     def new_pane(
         self,
         argv: Sequence[str],
@@ -60,11 +71,14 @@ class Mux(Protocol):
         focus: bool = True,
         floating: bool = False,
         suspended: bool = False,
+        stacked: bool = False,
         width: str | None = None,
         height: str | None = None,
     ) -> str | None:
         """Create a pane running argv; returns its id. tab_id: create in that
         tab; focus=False: leave focus where it is; suspended: start-suspended.
+        stacked: add to the target's Zellij pane stack instead of splitting
+        (G2); backends without native stacking (tmux) ignore it and split.
         """
 
     def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:

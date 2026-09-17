@@ -27,6 +27,10 @@ class PaneSpec:
     # status pane under the last agent pane instead of beside it.
     children: tuple[PaneSpec, ...] = ()
     direction: str = "vertical"
+    # Only meaningful alongside `children`: renders a Zellij stack
+    # (`pane stacked=true { ... }`) instead of a `split_direction` container.
+    # Takes precedence over `direction` when both are set (G2).
+    stacked: bool = False
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,9 @@ class TabSpec:
     name: str
     panes: tuple[PaneSpec, ...]
     direction: str = "vertical"  # split direction of the top-level container
+    # Stack the top-level pane group instead of splitting it (G2); ignored
+    # when there's only one pane (nothing to stack).
+    stacked: bool = False
     focus: bool = False
 
 
@@ -52,8 +59,14 @@ class KeybindSpec:
 class SessionSpec:
     name: str
     tabs: tuple[TabSpec, ...]
+    # auto_layout true (G3): Zellij re-applies the tab's swap layout whenever
+    # its pane count changes -- the same re-tile Alt+[/Alt+] does manually,
+    # now automatic on every pane add/remove. F2 turned this off because the
+    # bundled agent-16.kdl's hand-maintained swap_tiled_layout only matched
+    # one exact pane count; hive's generated tabs define none at all, so
+    # Zellij falls back to its own built-in defaults, which fit any count.
     options: tuple[tuple[str, str], ...] = (
         ("stacked_resize", "false"),
-        ("auto_layout", "false"),
+        ("auto_layout", "true"),
     )
     keybinds: KeybindSpec = KeybindSpec()

@@ -13,6 +13,12 @@ from pydantic_settings import SettingsConfigDict
 
 from .base import HiveBaseSettings
 
+# Kept in sync with state/session_layout.py:AGENTS_LAYOUTS by hand -- config
+# and state are sibling layer-1 packages (see docs/ARCHITECTURE.md), so
+# neither may import the other; duplicating this 3-tuple is cheaper than
+# adding a shared module for one constant.
+_AGENTS_LAYOUTS = ("split", "stacked", "tabs")
+
 
 class AgentProfileConfig(BaseModel):
     """Configuration for per-agent config-dir profiles.
@@ -187,16 +193,21 @@ class KeybindsConfig(BaseModel):
     Attributes:
         enabled: Master switch for all keybinds below.
         new_agent_pane: Split-or-tab a new agent pane (`hive pane new`).
+            Defaults to `Alt n`, replacing Zellij's own default "new pane"
+            binding for the life of the session -- the one deliberate
+            exception to this layout never overriding a default Zellij key.
         new_agent_tab: Open a new agents tab (`hive tab agents`).
         floating_shell: Floating shell in the current worktree (`hive wt exec --here`).
         control_plane: Toggle the floating control-plane board (`hive status --toggle`).
+        worktree_shell: Floating shell in a picked worktree (`hive wt exec -w -`).
     """
 
     enabled: bool = True
-    new_agent_pane: str | None = "Alt a"
+    new_agent_pane: str | None = "Alt n"
     new_agent_tab: str | None = "Alt Shift a"
     floating_shell: str | None = "Alt Shift s"
     control_plane: str | None = "Alt m"
+    worktree_shell: str | None = "Alt Shift w"
 
 
 class ZellijConfig(HiveBaseSettings):
@@ -216,11 +227,20 @@ class ZellijConfig(HiveBaseSettings):
             demand (outside the layout) takes the first free pane number and
             its label from this list.
         agents_per_tab: Agent panes in the rendered "agent" layout's tab (1 or 2).
-        control_plane: Where the `hive status --watch --compact` pane sits in
-            the rendered "agent" layout's tab: "right", "bottom", or "none".
+        control_plane: Where the `hive status --watch` board lives: "right"
+            or "bottom" nest a `--compact` pane into the agents tab; "none"
+            omits it; "tab" gives it its own dedicated first tab (full,
+            uncompacted) with the agents tab starting at tab 2.
+        agents_layout: Starting arrangement for on-demand agent panes: "split"
+            (side by side, the default), "stacked" (Zellij pane stacking), or
+            "tabs" (never split -- once idle slots run out, every further
+            agent opens a new tab, regardless of agents_per_tab). Switchable
+            live for the rest of the session with the control plane's `L`
+            hotkey or `hive pane layout <mode>`; this is just where a fresh
+            session starts.
         keybinds: Hotkeys shipped inside the rendered session file.
-        floating_shell_command: Command the floating-shell hotkey runs;
-            None uses `$SHELL`.
+        floating_shell_command: Command the floating-shell and
+            worktree-shell hotkeys run; None uses `$SHELL`.
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_ZELLIJ_")
@@ -228,7 +248,8 @@ class ZellijConfig(HiveBaseSettings):
     layout: str | None = "agent"
     session_name: str = "{repo}"
     agents_per_tab: int = 2
-    control_plane: str = "right"
+    control_plane: str = "tab"
+    agents_layout: str = "split"
     keybinds: Annotated[KeybindsConfig, Field(default_factory=KeybindsConfig)]
     floating_shell_command: str | None = None
     pane_labels: list[str] = [
@@ -260,8 +281,17 @@ class ZellijConfig(HiveBaseSettings):
     @field_validator("control_plane")
     @classmethod
     def validate_control_plane(cls, v: str) -> str:
-        if v not in ("right", "bottom", "none"):
-            raise ValueError("zellij.control_plane must be right, bottom, or none")
+        if v not in ("right", "bottom", "none", "tab"):
+            raise ValueError("zellij.control_plane must be right, bottom, none, or tab")
+        return v
+
+    @field_validator("agents_layout")
+    @classmethod
+    def validate_agents_layout(cls, v: str) -> str:
+        if v not in _AGENTS_LAYOUTS:
+            raise ValueError(
+                f"zellij.agents_layout must be one of {', '.join(_AGENTS_LAYOUTS)}"
+            )
         return v
 
 
