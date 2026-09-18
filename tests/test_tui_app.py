@@ -23,7 +23,7 @@ from hive_cli.services import session as session_service
 from hive_cli.state.pane_state import ICONS, PaneState
 from hive_cli.state.server import PaneStateServer
 from hive_cli.ui.tui.app import ControlPlaneApp
-from hive_cli.ui.tui.screens import DetailScreen, HelpScreen
+from hive_cli.ui.tui.screens import DetailScreen, HelpScreen, TabPickerScreen
 
 
 async def _wait_for(pilot, predicate, *, tries=40, step=0.05):
@@ -121,6 +121,24 @@ class TestEnterFocuses:
 
             await _wait_for(pilot, lambda: bool(mux.named("focus_pane")))
             assert mux.named("focus_pane")[-1][1][0] == "3"
+
+
+class TestVimNav:
+    async def test_j_and_k_move_the_cursor(self, servers, app):
+        async with app.run_test(size=(120, 30)) as pilot:
+            await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 2)
+            table = app.query_one(DataTable)
+            table.focus()
+            await pilot.pause()
+            assert table.cursor_coordinate.row == 0
+
+            await pilot.press("j")
+            await pilot.pause()
+            assert table.cursor_coordinate.row == 1
+
+            await pilot.press("k")
+            await pilot.pause()
+            assert table.cursor_coordinate.row == 0
 
 
 class TestRRestarts:
@@ -271,6 +289,20 @@ class TestFilter:
             await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 1)
             assert app.query_one(DataTable).row_count == 1
 
+    async def test_typing_narrows_live_before_submit(self, servers, app):
+        """Rows narrow as each character lands, not only once Enter is
+        pressed -- "type to find" should feel live."""
+        async with app.run_test(size=(120, 30)) as pilot:
+            await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 2)
+
+            await pilot.press("slash")
+            await pilot.pause()
+            for ch in "feat":
+                await pilot.press(ch)
+
+            await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 1)
+            assert app.query_one(DataTable).row_count == 1
+
     async def test_escape_clears_filter(self, servers, app):
         async with app.run_test(size=(120, 30)) as pilot:
             await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 2)
@@ -343,6 +375,21 @@ class TestIdleWritesNothing:
 
 
 class TestToolTab:
+    async def test_jk_on_picker_does_not_crash(self, servers, app, session_fns):
+        """ModalScreen bindings take precedence over the App's (Textual's
+        `_modal_binding_chain` stops at the modal), so the App-level j/k
+        bindings never reach the DataTable while a picker is open -- same
+        as every other App-level letter action already relies on."""
+        async with app.run_test(size=(120, 30)) as pilot:
+            await _wait_for(pilot, lambda: app.query_one(DataTable).row_count == 2)
+            await pilot.press("T")
+            await pilot.pause()
+
+            await pilot.press("j")
+            await pilot.pause()
+
+            assert isinstance(app.screen, TabPickerScreen)
+
     async def test_pick_opens_tab(self, app, session_fns):
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.press("T")

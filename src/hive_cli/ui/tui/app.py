@@ -40,6 +40,7 @@ from .screens import ConfirmScreen, DetailScreen, HelpScreen, TabPickerScreen
 HELP_TEXT = "\n".join(
     [
         "enter  Focus",
+        "j/k    Move down/up",
         "n      New agent pane",
         "t      Agents tab",
         "T      Tool tab",
@@ -74,6 +75,8 @@ class ControlPlaneApp(App):
     CSS_PATH = "control_plane.tcss"
     BINDINGS = [
         ("enter", "focus_pane", "Focus"),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
         ("n", "new_agent", "New agent"),
         ("t", "new_agents_tab", "Agents tab"),
         ("T", "tool_tab", "Tool tab"),
@@ -252,6 +255,15 @@ class ControlPlaneApp(App):
         binding otherwise wins and posts RowSelected first -- see below)."""
         await self._focus_selected(self._selected_pane_id())
 
+    def action_cursor_down(self) -> None:
+        """vim-style row navigation; the DataTable has no bindings of its
+        own for j/k so these bubble up from it uncontested, same as every
+        other letter-key action here."""
+        self.query_one(DataTable).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self.query_one(DataTable).action_cursor_up()
+
     async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         await self._focus_selected(event.row_key.value)
 
@@ -377,6 +389,12 @@ class ControlPlaneApp(App):
         field.display = False
         self.query = ""
         self.query_one(DataTable).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Narrows rows live, as each character is typed, rather than
+        waiting for submit -- "type to find" only feels that way if the
+        table visibly reacts while the filter box is still open."""
+        self.query = event.value
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.query = event.value

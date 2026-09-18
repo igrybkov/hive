@@ -308,5 +308,8 @@ class TestFilterRows:
     def test_matches_task(self):
         assert set(filter_rows(self._rows(), "login")) == {"3"}
 
+    def test_matches_worktree(self):
+        assert set(filter_rows(self._rows(), "wt2")) == {"4"}
+
     def test_no_match_is_empty(self):
         assert filter_rows(self._rows(), "nope") == {}

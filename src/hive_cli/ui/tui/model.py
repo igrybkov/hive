@@ -164,7 +164,8 @@ def name_cell(row: PaneRow) -> str:
 
 
 def filter_rows(rows: dict[str, PaneRow], query: str) -> dict[str, PaneRow]:
-    """Case-insensitive substring match over branch/agent/label/title/task."""
+    """Case-insensitive substring match over branch/agent/label/title/task/
+    worktree."""
     if not query:
         return rows
     q = query.lower()
@@ -176,4 +177,5 @@ def filter_rows(rows: dict[str, PaneRow], query: str) -> dict[str, PaneRow]:
         or q in row.label.lower()
         or q in row.title.lower()
         or q in row.task.lower()
+        or q in row.worktree.lower()
     }
