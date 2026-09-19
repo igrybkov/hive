@@ -41,6 +41,7 @@ from ..state.pane_state import (
     compose_tab_name,
     label_for,
     next_free_pane_id,
+    random_label,
     title_for,
 )
 from ..state.server import PaneStateServer
@@ -90,14 +91,19 @@ def null_context() -> PaneContext:
 
 
 def open_pane_context(
-    *, mux: Mux | None = None, labels: list[str] | None = None
+    *,
+    mux: Mux | None = None,
+    labels: list[str] | None = None,
+    label_pool: list[str] | None = None,
 ) -> PaneContext:
     """Inside a multiplexer pane: assign identity, start the server.
 
     Outside a multiplexer: a no-op context. A `hive run` started on demand
     (no HIVE_PANE_ID) takes the first pane number no live `hive run` in the
-    session holds, and that number's label from `labels`
-    (default: zellij.pane_labels).
+    session holds, and that number's label from `labels` (default:
+    zellij.pane_labels), falling back to a random, not-already-taken name
+    from `label_pool` (default: zellij.pane_label_pool) once `labels` runs
+    out, same as a pane opened through `new_agent_pane`.
     """
     mux = mux if mux is not None else get_mux()
     rt = get_runtime_settings()
@@ -114,7 +120,13 @@ def open_pane_context(
         rt.pane_id = str(number)
         if labels is None:
             labels = get_settings().zellij.pane_labels
-        rt.pane_label = rt.pane_label or label_for(number, labels)
+        if label_pool is None:
+            label_pool = get_settings().zellij.pane_label_pool
+        rt.pane_label = (
+            rt.pane_label
+            or label_for(number, labels)
+            or random_label({s.label for s in others if s.label}, label_pool)
+        )
     tab_id = next((p.tab_id for p in mux.list_panes() if p.id == pane_id), "")
     state = PaneState(
         session=session,

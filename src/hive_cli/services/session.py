@@ -14,7 +14,7 @@ import os
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from ..config import get_settings
@@ -31,8 +31,9 @@ from ..mux.tmux.backend import TmuxMux
 from ..mux.tmux.conf import render_conf
 from ..mux.zellij.kdl import render_session_file
 from ..state import client
-from ..state.pane_state import label_for, next_free_pane_id
+from ..state.pane_state import label_for, next_free_pane_id, random_label
 from ..state.pane_state import pane_hive_id as _pane_hive_id
+from ..state.pane_state import pane_label as _pane_label
 from ..state.session_layout import read_agents_layout, write_agents_layout
 from . import registry
 from .restart import RestartFloor
@@ -206,6 +207,14 @@ def _taken_pane_ids(panes: list[PaneInfo], session: str) -> list[int]:
     return live + from_titles
 
 
+def _taken_labels(panes: list[PaneInfo], session: str) -> set[str]:
+    """`_taken_pane_ids`'s label counterpart."""
+    states = client.list_states(paths.session_sock_dir(session))
+    live = {s.label for s in states if s.label}
+    from_titles = {lbl for p in panes if (lbl := _pane_label(p.title))}
+    return live | from_titles
+
+
 def agent_panes_in_tab(
     panes: list[PaneInfo], tab_id: str, session: str
 ) -> list[PaneInfo]:
@@ -364,7 +373,9 @@ def new_agent_pane(
 
     hive = paths.hive_executable()
     number = next_free_pane_id(_taken_pane_ids(panes, session))
-    label = label_for(number, settings.zellij.pane_labels)
+    label = label_for(number, settings.zellij.pane_labels) or random_label(
+        _taken_labels(panes, session), settings.zellij.pane_label_pool
+    )
 
     if mode != "tabs" and len(existing) < settings.zellij.agents_per_tab:
         _refocus_before_split(mux, panes, existing, target_tab)
@@ -375,10 +386,14 @@ def new_agent_pane(
         # the new pane goes; Zellij's own --stacked docs don't pair it with
         # a direction, so omit "right" rather than guess whether the CLI
         # accepts (or silently ignores, or errors on) both together.
+        # `name` sets the `cN[: label]` title at creation, not after this
+        # child's own `hive run` boots -- so a concurrent call's list_panes()
+        # sees this number/label as taken right away instead of racing it.
         result = mux.new_pane(
             argv,
             direction="" if mode == "stacked" else "right",
             tab_id=target_tab or None,
+            name=f"c{number}: {label}" if label else f"c{number}",
             focus=focus,
             stacked=mode == "stacked",
         )
@@ -391,6 +406,7 @@ def new_agent_pane(
             settings=settings,
             stacked=mode == "stacked",
             focus=focus,
+            taken_labels=_taken_labels(panes, session),
         )
         result = mux.new_tab(spec, focus=focus)
     if result is None:
@@ -410,6 +426,7 @@ def _fresh_agents_tab_spec(
     settings: HiveSettings,
     stacked: bool,
     focus: bool,
+    taken_labels: Collection[str],
 ) -> TabSpec:
     """A brand-new, fully-provisioned agents tab: `n` slots starting at
     `first_id`, the first live and the rest `start_suspended` idle
@@ -418,8 +435,19 @@ def _fresh_agents_tab_spec(
     built by starting with one pane and splitting the rest in later: Zellij's
     `new-pane --direction right` has no way to request a ratio
     (`--width`/`--height` require `--floating`; `resize` is relative-only),
-    so a live split of a solo pane can land anywhere, not 50/50."""
-    labels = [label_for(first_id + i, settings.zellij.pane_labels) for i in range(n)]
+    so a live split of a solo pane can land anywhere, not 50/50.
+
+    Labels beyond `pane_labels` come from `pane_label_pool`, excluding both
+    `taken_labels` and whatever this loop already handed out this batch."""
+    taken = set(taken_labels)
+    labels: list[str] = []
+    for i in range(n):
+        label = label_for(first_id + i, settings.zellij.pane_labels) or random_label(
+            taken, settings.zellij.pane_label_pool
+        )
+        if label:
+            taken.add(label)
+        labels.append(label)
     return agents_tab(
         n=n,
         control="none",
@@ -439,7 +467,8 @@ def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
     hive = paths.hive_executable()
     if name == AGENTS_TAB:
         session = mux.own_session() or ""
-        first_id = next_free_pane_id(_taken_pane_ids(mux.list_panes(), session))
+        panes = mux.list_panes()
+        first_id = next_free_pane_id(_taken_pane_ids(panes, session))
         spec = _fresh_agents_tab_spec(
             hive=hive,
             first_id=first_id,
@@ -447,6 +476,7 @@ def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
             settings=settings,
             stacked=_agents_layout_mode(session, settings) == "stacked",
             focus=focus,
+            taken_labels=_taken_labels(panes, session),
         )
     else:
         spec = resolve_tab(name, hive=hive, user_tabs=settings.tabs, backend=mux.name)

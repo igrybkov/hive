@@ -20,6 +20,8 @@ from hive_cli.state.pane_state import (
     label_for,
     next_free_pane_id,
     pane_hive_id,
+    pane_label,
+    random_label,
     title_for,
 )
 
@@ -39,6 +41,22 @@ from hive_cli.state.pane_state import (
 )
 def test_pane_hive_id_parses_zellij_and_tmux_titles(title, expected):
     assert pane_hive_id(title) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("c2: Bohdan", "Bohdan"),
+        ("c2: Bohdan [claude]", "Bohdan"),
+        ("hold: c2: Bohdan", "Bohdan"),  # tmux's suspended-pane title
+        ("c12", ""),  # no label configured for this pane number
+        ("hold: hive run --restart", ""),
+        ("hive", ""),
+        ("", ""),
+    ],
+)
+def test_pane_label_parses_zellij_and_tmux_titles(title, expected):
+    assert pane_label(title) == expected
 
 
 def _title(**overrides) -> str:
@@ -182,3 +200,19 @@ def test_label_for():
     assert label_for(2, labels) == "Bohdan"
     assert label_for(3, labels) == ""
     assert label_for(0, labels) == ""
+
+
+def test_random_label_excludes_taken_names():
+    for _ in range(20):
+        assert random_label({"Anton"}, ["Anton", "Bohdan"]) == "Bohdan"
+
+
+def test_random_label_picks_from_the_whole_pool_over_many_draws():
+    pool = ["Anton", "Bohdan", "Chris"]
+    seen = {random_label(set(), pool) for _ in range(200)}
+    assert seen == set(pool)
+
+
+def test_random_label_empty_when_pool_fully_taken():
+    assert random_label({"Anton", "Bohdan"}, ["Anton", "Bohdan"]) == ""
+    assert random_label(set(), []) == ""

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from ...git import GitSummary
 from ...mux.base import PaneInfo
-from ...state.pane_state import ICONS, PaneState, pane_hive_id
+from ...state.pane_state import ICONS, PaneState, pane_hive_id, pane_label
 
 
 @dataclass(frozen=True)
@@ -46,10 +46,15 @@ def age_bucket(seconds: float) -> str:
 
 def status_cell(row: PaneRow, *, now: float) -> str:
     """Blank for a bare pane that's neither idle nor exited -- there's no
-    hive status to show, and "?" would read as an error rather than "n/a"."""
+    hive status to show, and "?" would read as an error rather than "n/a".
+    No age suffix when `status_since` is the bare-row sentinel (0.0, never a
+    real "time of last change") -- otherwise it reads as tens of thousands
+    of days old (`now - 0` in epoch-day terms)."""
     if not row.status:
         return ""
     icon = ICONS.get(row.status, "?")
+    if not row.status_since:
+        return f"{icon} {row.status}"
     return f"{icon} {row.status} {age_bucket(now - row.status_since)}"
 
 
@@ -141,7 +146,7 @@ def _bare_row(pane: PaneInfo) -> PaneRow:
     return PaneRow(
         pane_id=pane.id,
         hive_pane_id=pane_hive_id(pane.title) or 0,
-        label="",
+        label=pane_label(pane.title),
         title=pane.title,
         agent="",
         branch="",

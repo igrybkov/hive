@@ -8,13 +8,16 @@ produced before F0; see compose_title.
 
 from __future__ import annotations
 
+import random
 import re
+from collections.abc import Collection, Sequence
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 SCHEMA = 1
 
 _PANE_TITLE_ID_RE = re.compile(r"^(?:hold: )?c(\d+)(?::|$)")
+_PANE_TITLE_LABEL_RE = re.compile(r"^(?:hold: )?c\d+: (.+)$")
 
 STATUSES = (
     "selecting",
@@ -166,6 +169,20 @@ def label_for(pane_id: int, labels: list[str]) -> str:
     return labels[pane_id - 1] if 0 < pane_id <= len(labels) else ""
 
 
+def random_label(taken: Collection[str], pool: Sequence[str]) -> str:
+    """A name from ``pool`` not already in ``taken``, for on-demand pane
+    numbers beyond ``label_for``'s ordered list (``zellij.pane_labels``) --
+    the fallback that keeps handing out real names instead of a bare ``cN``
+    once that list runs out. Picked with ``random.choice`` over just the
+    still-available names, not a fixed walk through ``pool``, so a whole
+    freshly-opened batch of panes doesn't get the pool in a predictable
+    order. ``""`` when every name in ``pool`` is already taken -- same
+    "give up, fall back to bare cN" outcome as ``label_for`` running out.
+    """
+    available = [name for name in pool if name not in taken]
+    return random.choice(available) if available else ""
+
+
 def pane_hive_id(title: str) -> int | None:
     """Parse the `HIVE_PANE_ID` a layout pane was given from its `cN[: label]`
     title (agents_tab names panes this way before `hive run` ever starts and
@@ -176,3 +193,18 @@ def pane_hive_id(title: str) -> int | None:
     """
     m = _PANE_TITLE_ID_RE.match(title)
     return int(m.group(1)) if m else None
+
+
+def pane_label(title: str) -> str:
+    """Parse the `HIVE_PANE_LABEL` a layout pane was given from its `cN:
+    label` title -- the mirror of `pane_hive_id`, so a `start_suspended`
+    pane (no live state yet) still shows the name the layout already
+    assigned it instead of the bare `cN` fallback. Stops before a trailing
+    `" [agent]"` suffix (`compose_title` appends that as its own part),
+    same titles `pane_hive_id` already parses (e.g. "c2: Bohdan [claude]")."""
+    m = _PANE_TITLE_LABEL_RE.match(title)
+    if not m:
+        return ""
+    label = m.group(1)
+    bracket = label.find(" [")
+    return label[:bracket] if bracket != -1 else label

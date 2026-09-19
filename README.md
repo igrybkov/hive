@@ -595,6 +595,13 @@ zellij:
   # pane_labels: [Anton, Bohdan, Chris, Dmytro, Emily, Frank, Grygoriy, Henry,
   #               Ihor, Jake, Kateryna, Liam, Mykola, Noah, Orest, Petro]
 
+  # Fallback names for on-demand pane numbers beyond pane_labels (c17, c18,
+  # ...): one is picked at random, excluding any name already in use, so
+  # opening many more agents than pane_labels has entries still gets real
+  # names instead of a bare "c17". See config/default.yml for the full
+  # 70-name default (Ukrainian and American first names).
+  # pane_label_pool: [Andriy, Vasyl, ...]
+
   # Hotkeys shipped inside the rendered session file (see Hotkeys above). Set
   # a key to null to disable just that one binding, or enabled: false for all.
   keybinds:
@@ -806,6 +813,17 @@ Each item can be:
   holds and takes its label from this list, so its title reads like the
   layout's own panes. Env: `HIVE_ZELLIJ_PANE_LABELS` (comma-separated).
 
+#### `zellij.pane_label_pool`
+
+- **Type:** `list[string]`
+- **Default:** 70 names (Ukrainian and American), see `config/default.yml`
+- **Description:** Fallback names for on-demand pane numbers beyond
+  `pane_labels` (c17, c18, …). One is picked at random, excluding any name
+  already in use by a live or pending pane in the session, so opening many
+  more agents than `pane_labels` has entries still gets real names instead
+  of a bare `c17`; only exhausting both lists at once falls back to that.
+  Env: `HIVE_ZELLIJ_PANE_LABEL_POOL` (comma-separated).
+
 #### `zellij.keybinds`
 
 - **Type:** `object`
@@ -910,7 +928,7 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_HOOKS_ENABLED`              | boolean | Wire agent lifecycle hooks to the pane's status |
 | `HIVE_MUX_BACKEND`                | `auto`\|`zellij`\|`tmux` | Multiplexer backend, overriding `mux.backend` |
 | `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
-| `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels` when self-assigned |
+| `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels`, falling back to `zellij.pane_label_pool`, when self-assigned |
 | `HIVE_PANE_SOCK`                  | path    | Pane-state socket served by this pane's `hive run` (exported to the agent) |
 | `HIVE_TRACE`                      | `1`     | Trace phase marks, spawned commands and refiner timings to stderr |
 

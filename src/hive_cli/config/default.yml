@@ -211,6 +211,81 @@ zellij:
     - Noah
     - Orest
     - Petro
+  # Fallback names for on-demand pane numbers beyond pane_labels (c17, c18,
+  # ...): one is picked at random, excluding any name already in use, so
+  # opening many more agents than pane_labels has entries still gets real
+  # names instead of a bare "c17".
+  pane_label_pool:
+    - Andriy
+    - Vasyl
+    - Yuriy
+    - Pavlo
+    - Mykhailo
+    - Oleh
+    - Taras
+    - Nazar
+    - Yevhen
+    - Ostap
+    - Sviatoslav
+    - Stepan
+    - Roman
+    - Yaroslav
+    - Viktor
+    - Maksym
+    - Denys
+    - Artem
+    - Kyrylo
+    - Oleksiy
+    - Oleksandr
+    - Serhiy
+    - Volodymyr
+    - Anatoliy
+    - Ivan
+    - Vitaliy
+    - Ruslan
+    - Zenon
+    - Lev
+    - Olena
+    - Olha
+    - Oksana
+    - Solomiya
+    - Yaroslava
+    - Daryna
+    - Ethan
+    - Mason
+    - Logan
+    - Lucas
+    - Jack
+    - Owen
+    - Wyatt
+    - Caleb
+    - Ryan
+    - Tyler
+    - Cody
+    - Blake
+    - Dylan
+    - Austin
+    - Cole
+    - Chase
+    - Trevor
+    - Brett
+    - Shane
+    - Derek
+    - Kyle
+    - Brandon
+    - Justin
+    - Corey
+    - Grant
+    - Miles
+    - Seth
+    - Grace
+    - Chloe
+    - Hazel
+    - Ivy
+    - Lily
+    - Ruby
+    - Nora
+    - Sadie
 
 # Which terminal multiplexer backend `hive session`/`get_mux()` uses. "auto"
 # picks Zellij inside a Zellij session, tmux inside a tmux session, else

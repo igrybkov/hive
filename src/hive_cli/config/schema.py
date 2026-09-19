@@ -226,6 +226,12 @@ class ZellijConfig(HiveBaseSettings):
             bundled layout (`c1: Anton` -> "Anton"). A `hive run` started on
             demand (outside the layout) takes the first free pane number and
             its label from this list.
+        pane_label_pool: Fallback names for on-demand pane numbers beyond
+            `pane_labels` (c17, c18, ...). One is picked at random, excluding
+            any name already in use by a live or pending pane, so opening
+            many more agents than `pane_labels` has entries still gets real
+            names instead of a bare "c17"; only every name in both lists
+            being simultaneously in use falls back to that.
         agents_per_tab: Agent panes in the rendered "agent" layout's tab (1 or 2).
         control_plane: Where the `hive status --watch` board lives: "right"
             or "bottom" nest a `--compact` pane into the agents tab; "none"
@@ -269,6 +275,81 @@ class ZellijConfig(HiveBaseSettings):
         "Noah",
         "Orest",
         "Petro",
+    ]
+    pane_label_pool: list[str] = [
+        # Ukrainian (Ukrainian forms, not Russian ones -- Volodymyr not
+        # Vladimir, Oleksandr not Alexander, Olena not Elena, ...)
+        "Andriy",
+        "Vasyl",
+        "Yuriy",
+        "Pavlo",
+        "Mykhailo",
+        "Oleh",
+        "Taras",
+        "Nazar",
+        "Yevhen",
+        "Ostap",
+        "Sviatoslav",
+        "Stepan",
+        "Roman",
+        "Yaroslav",
+        "Viktor",
+        "Maksym",
+        "Denys",
+        "Artem",
+        "Kyrylo",
+        "Oleksiy",
+        "Oleksandr",
+        "Serhiy",
+        "Volodymyr",
+        "Anatoliy",
+        "Ivan",
+        "Vitaliy",
+        "Ruslan",
+        "Zenon",
+        "Lev",
+        "Olena",
+        "Olha",
+        "Oksana",
+        "Solomiya",
+        "Yaroslava",
+        "Daryna",
+        # American
+        "Ethan",
+        "Mason",
+        "Logan",
+        "Lucas",
+        "Jack",
+        "Owen",
+        "Wyatt",
+        "Caleb",
+        "Ryan",
+        "Tyler",
+        "Cody",
+        "Blake",
+        "Dylan",
+        "Austin",
+        "Cole",
+        "Chase",
+        "Trevor",
+        "Brett",
+        "Shane",
+        "Derek",
+        "Kyle",
+        "Brandon",
+        "Justin",
+        "Corey",
+        "Grant",
+        "Miles",
+        "Seth",
+        "Grace",
+        "Chloe",
+        "Hazel",
+        "Ivy",
+        "Lily",
+        "Ruby",
+        "Nora",
+        "Sadie",
     ]
 
     @field_validator("agents_per_tab")

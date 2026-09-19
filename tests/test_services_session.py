@@ -317,7 +317,67 @@ def test_new_agent_pane_splits_when_room(hive_path):
     )
     assert kwargs["direction"] == "right"
     assert kwargs["tab_id"] == "t1"
+    # `name` gives the split pane its `cN: label` title at creation, so a
+    # concurrent `new_agent_pane` call (a rapid-fire "new pane" keypress)
+    # racing right behind it sees this pane in `_taken_pane_ids` immediately
+    # instead of only once this pane's own `hive run` finishes booting and
+    # renames it -- closing the window that let two calls hand out the same
+    # number and label (the reused-names bug).
+    assert kwargs["name"] == "c2: Bohdan"
     assert pane_id
+
+
+def test_new_agent_pane_falls_back_to_label_pool_once_pane_labels_run_out(hive_path):
+    """Beyond the configured `pane_labels`, a name still comes from
+    `pane_label_pool` instead of the bare `cN` fallback -- the "ran out of
+    names" bug: with only one configured label, pane 2 used to get no label
+    (and no title match for the next call to recognize it) at all."""
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux,
+            settings=HiveSettings(
+                zellij=ZellijConfig(
+                    agents_per_tab=2,
+                    pane_labels=["Anton"],
+                    pane_label_pool=["Andriy", "Ethan"],
+                )
+            ),
+        )
+
+    argv = mux.named("new_pane")[0][1][0]
+    label = argv[2].removeprefix("HIVE_PANE_LABEL=")
+    assert label in ("Andriy", "Ethan")
+    assert mux.named("new_pane")[0][2]["name"] == f"c2: {label}"
+
+
+def test_new_agent_pane_pool_label_excludes_labels_already_taken(hive_path):
+    """The random pick avoids any name a pane already carries -- whether via
+    a live socket or a title-only pending pane elsewhere in the session, not
+    just an index match in `pane_labels` -- so it never hands out a name
+    that's already on screen. Pane "5" sits in a different tab (`t2`) so it
+    plays no part in the same-tab idle-reuse check, only in what counts as
+    a taken id/label session-wide."""
+    mux = FakeMux(
+        session="s",
+        panes=[_pane("3", "t1"), _pane("5", "t2", title="c2: Ethan")],
+    )
+    with _live("s", "3", 1):
+        session.new_agent_pane(
+            mux=mux,
+            settings=HiveSettings(
+                zellij=ZellijConfig(
+                    agents_per_tab=2,
+                    pane_labels=["Anton"],
+                    pane_label_pool=["Ethan", "Andriy"],
+                )
+            ),
+        )
+
+    argv = mux.named("new_pane")[0][1][0]
+    assert "HIVE_PANE_ID=3" in argv
+    assert "HIVE_PANE_LABEL=Andriy" in argv
+    assert "HIVE_PANE_LABEL=Ethan" not in argv
 
 
 def test_new_agent_pane_opens_tab_when_full(hive_path):
@@ -621,6 +681,25 @@ def test_open_tab_agents_uses_next_free_pane_id(hive_path):
     assert spec.name == "agents"
     assert len(spec.panes) == HiveSettings().zellij.agents_per_tab
     assert spec.panes[0].env[0] == ("HIVE_PANE_ID", "2")
+
+
+def test_open_tab_agents_pool_labels_dont_repeat_within_the_batch(hive_path):
+    """Every slot beyond `pane_labels` draws from `pane_label_pool`, and the
+    whole batch is provisioned in one `_fresh_agents_tab_spec` call -- each
+    pick has to exclude whatever the loop already handed to an earlier slot
+    in that same batch, not just labels taken before the call started."""
+    mux = FakeMux(session="s")
+    custom = HiveSettings(
+        zellij=ZellijConfig(
+            agents_per_tab=2, pane_labels=[], pane_label_pool=["Andriy", "Ethan"]
+        )
+    )
+    with patch("hive_cli.services.session.get_settings", return_value=custom):
+        session.open_tab("agents", mux=mux)
+
+    spec = mux.named("new_tab")[0][1][0]
+    picked = [dict(p.env)["HIVE_PANE_LABEL"] for p in spec.panes]
+    assert sorted(picked) == ["Andriy", "Ethan"]
 
 
 def test_resolve_here_matrix(tmp_path):

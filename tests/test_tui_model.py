@@ -102,6 +102,26 @@ class TestStatusCell:
         )
         assert status_cell(row, now=160.0) == "✳ busy 1m"
 
+    def test_no_age_suffix_for_the_bare_row_sentinel(self):
+        """`_bare_row` sets `status_since=0.0` for a pane with no real "last
+        changed" time -- showing `now - 0` as an age would read as tens of
+        thousands of days old."""
+        row = PaneRow(
+            pane_id="4",
+            hive_pane_id=2,
+            label="",
+            agent="",
+            branch="",
+            worktree="",
+            status="idle",
+            status_since=0.0,
+            git="",
+            task="",
+            tab_id="t1",
+            focused=False,
+        )
+        assert status_cell(row, now=1_800_000_000.0) == "○ idle"
+
 
 class TestBuildRows:
     def test_merges_states_panes_facts_tasks(self):
@@ -167,6 +187,20 @@ class TestBuildRows:
         assert row.hive_pane_id == 2
         assert row.status == "idle"
         assert row.title == "c2: Bohdan"
+
+    def test_suspended_agent_slot_shows_its_layout_label(self):
+        """The layout already put the assigned name in the pane title
+        (`cN: label`) before `hive run` ever starts -- a suspended slot
+        should show that name, not fall back to the bare `cN`."""
+        panes = {"4": _pane("4", title="c2: Bohdan", suspended=True)}
+        rows = build_rows({}, panes, {}, {}, now=0.0)
+        assert rows["4"].label == "Bohdan"
+        assert name_cell(rows["4"]) == "Bohdan"
+
+    def test_tmux_hold_title_also_yields_a_label(self):
+        panes = {"4": _pane("4", title="hold: c2: Bohdan", suspended=True)}
+        rows = build_rows({}, panes, {}, {}, now=0.0)
+        assert rows["4"].label == "Bohdan"
 
     def test_tool_pane_without_state_has_blank_columns(self):
         panes = {"9": _pane("9", title="lazygit")}

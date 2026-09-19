@@ -955,6 +955,50 @@ class TestRunHooks:
         assert "hive-hook is not installed" in result.output
 
 
+class TestDynamicAgentRunnerPaneTitle:
+    """The dynamic runner (used by --restart) must push the agent it is
+    about to run into the pane state, so the title's [agent] segment tracks
+    a Ctrl+A switch or a re-detect landing on a different agent instead of
+    staying stuck on whatever was detected when the pane opened."""
+
+    def test_run_with_dynamic_agent_updates_ctx_agent(self, monkeypatch):
+        from hive_cli.commands.run import _make_dynamic_agent_runner
+
+        updates: list[dict] = []
+
+        class FakeCtx:
+            def update(self, **fields):
+                updates.append(fields)
+
+        monkeypatch.setattr(
+            "hive_cli.commands.run._detect_current_agent",
+            lambda preferred, args: ("codex", ["codex"]),
+        )
+        monkeypatch.setattr("hive_cli.commands.run.get_agent_config", lambda name: None)
+        monkeypatch.setattr(
+            "hive_cli.commands.run.get_extra_dirs_args", lambda name, dirs: []
+        )
+        monkeypatch.setattr(
+            "hive_cli.commands.run.hook_args",
+            lambda name, hive_hook, settings: [],
+        )
+        monkeypatch.setattr(
+            "hive_cli.commands.run.pane.run_with_resume", lambda *a, **k: 0
+        )
+
+        runner = _make_dynamic_agent_runner(
+            agent=None,
+            args=(),
+            resume=False,
+            cli_specified_agent=False,
+            ctx=FakeCtx(),
+            hive_hook="",
+        )
+        runner(["claude"])
+
+        assert {"agent": "codex"} in updates
+
+
 class TestRunHelp:
     """Tests for run command help."""
 

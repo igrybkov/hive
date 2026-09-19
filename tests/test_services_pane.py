@@ -431,6 +431,27 @@ class TestOpenPaneContext:
         finally:
             ctx.close()
 
+    def test_open_context_falls_back_to_label_pool_once_labels_run_out(self):
+        """A pane self-assigning beyond the given `labels` still gets a real
+        name from `label_pool`, instead of the bare `cN` fallback -- the
+        same "ran out of names" behavior `new_agent_pane` gets, for a `hive
+        run` started outside that path (a manually opened pane)."""
+        session_dir = paths.session_sock_dir("s")
+        session_dir.mkdir(parents=True)
+        one = PaneStateServer(
+            session_dir / "1.sock", PaneState(session="s", pane_id="1", hive_pane_id=1)
+        )
+        fake = FakeMux(pane_id="2", session="s", panes=[_pane("2", "t1")])
+        with one:
+            ctx = open_pane_context(
+                mux=fake, labels=["Anton"], label_pool=["Andriy", "Ethan"]
+            )
+            try:
+                assert ctx.server.state.hive_pane_id == 2
+                assert ctx.server.state.label in ("Andriy", "Ethan")
+            finally:
+                ctx.close()
+
     def test_open_context_without_pane_identity_is_noop(self):
         ctx = open_pane_context(mux=FakeMux(pane_id=None, session="s"))
         assert ctx.server is None and ctx.session == "s"

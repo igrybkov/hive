@@ -152,6 +152,10 @@ def _make_dynamic_agent_runner(
 
         current_agent_name, current_cmd = result
 
+        # Ctrl+A can switch agents without restarting hive; keep the pane
+        # title's [agent] segment in sync with what's about to run.
+        ctx.update(agent=current_agent_name)
+
         # Re-read skip-permissions (may be toggled by Ctrl+S in picker)
         # Get skip-permissions args and extra_args for current agent
         skip_perm_args: list[str] = []
