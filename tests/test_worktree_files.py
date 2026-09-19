@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from hive_cli.utils.deps import setup_worktree_files
+from hive_cli.services.worktrees import setup_worktree_files
 
 
 def _make_config(symlink_files=None, copy_files=None):
@@ -28,7 +28,9 @@ class TestSetupWorktreeFiles:
         main.mkdir()
         wt.mkdir()
 
-        with patch("hive_cli.utils.deps.load_config", return_value=_make_config()):
+        with patch(
+            "hive_cli.services.worktrees.load_config", return_value=_make_config()
+        ):
             assert setup_worktree_files(wt, main) is True
 
     def test_symlink_created(self, tmp_path: Path):
@@ -40,7 +42,7 @@ class TestSetupWorktreeFiles:
         (main / ".env").write_text("SECRET=42")
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=[".env"]),
         ):
             assert setup_worktree_files(wt, main) is True
@@ -59,7 +61,7 @@ class TestSetupWorktreeFiles:
         (main / ".env").write_text("SECRET=42")
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(copy_files=[".env"]),
         ):
             assert setup_worktree_files(wt, main) is True
@@ -78,7 +80,7 @@ class TestSetupWorktreeFiles:
         (main / "config" / ".env").write_text("NESTED=1")
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=["config/.env"]),
         ):
             assert setup_worktree_files(wt, main) is True
@@ -93,7 +95,7 @@ class TestSetupWorktreeFiles:
         wt.mkdir()
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=[".env"]),
         ):
             assert setup_worktree_files(wt, main) is False
@@ -110,7 +112,7 @@ class TestSetupWorktreeFiles:
         (wt / ".env").write_text("OLD")
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=[".env"]),
         ):
             assert setup_worktree_files(wt, main) is False
@@ -125,7 +127,7 @@ class TestSetupWorktreeFiles:
         wt.mkdir()
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=["/etc/passwd"]),
         ):
             assert setup_worktree_files(wt, main) is False
@@ -140,7 +142,7 @@ class TestSetupWorktreeFiles:
         # .secrets does not exist in main
 
         with patch(
-            "hive_cli.utils.deps.load_config",
+            "hive_cli.services.worktrees.load_config",
             return_value=_make_config(symlink_files=[".env", ".secrets"]),
         ):
             assert setup_worktree_files(wt, main) is False

@@ -21,6 +21,9 @@ agents:
         # CLAUDE_CONFIG_DIR fully isolates config, credentials, and session history.
         # Source: Anthropic docs (verified).
         config_dir_env: CLAUDE_CONFIG_DIR
+      hooks:
+        # `--settings` merges with ~/.claude/settings.json (verified).
+        mode: cli
 
     copilot:
       resume_args: ["--continue"]
@@ -36,6 +39,9 @@ agents:
         # seed_files:
         #   settings.json: '{"storeTokenPlaintext": true}\n'
         config_dir_env: COPILOT_HOME
+      hooks:
+        mode: unsupported
+        note: "hooks live in the repo's .github/hooks"
 
     codex:
       resume_args: ["resume", "--last"]
@@ -51,6 +57,11 @@ agents:
         seed_files:
           config.toml: |
             cli_auth_credentials_store = "file"
+      hooks:
+        # `-c notify=[...]` (verified against the installed CLI 2026-09-09) replaces
+        # any user-configured notify -- hive does not merge it.
+        mode: cli
+        note: "replaces a user-configured notify"
 
     gemini:
       resume_args: ["--resume", "latest"]
@@ -67,6 +78,10 @@ agents:
         config_dir_env: GEMINI_CLI_HOME
         extra_env:
           GEMINI_FORCE_FILE_STORAGE: "true"
+      hooks:
+        # Merged into the hive-managed profile's .gemini/settings.json (verified
+        # 2026-09-09 against geminicli.com/docs/hooks); never the user's real config.
+        mode: profile
 
     # Cursor agent CLI - no extra dirs support
     agent:
@@ -80,6 +95,9 @@ agents:
         # relocated by CURSOR_CONFIG_DIR. Login isolation requires overriding HOME, which
         # hive does not do. Config+history isolates cleanly; logins will be shared.
         config_dir_env: CURSOR_CONFIG_DIR
+      hooks:
+        mode: unsupported
+        note: "CURSOR_CONFIG_DIR does not relocate hooks.json"
 
     # Cursor agent alternative name - no extra dirs support
     cursor-agent:
@@ -89,14 +107,25 @@ agents:
       profile:
         # Same as 'agent' above. See CURSOR_CONFIG_DIR caveats.
         config_dir_env: CURSOR_CONFIG_DIR
+      hooks:
+        mode: unsupported
 
 resume:
+  enabled: false
+
+# Agent lifecycle hooks: when enabled, hive injects hook wiring (per launch for
+# "cli"-mode agents, into the hive-managed profile for "profile"-mode agents)
+# so tab names and the control plane reflect what the agent is doing.
+hooks:
   enabled: false
 
 worktrees:
   enabled: true
   parent_dir: "~/.worktrees/{repo}/{branch}"
   resume: true # Enable resume for worktree runs (config-driven, not explicit flag)
+  # Seconds between `git fetch origin` runs started by the worktree picker
+  # (measured on .git/FETCH_HEAD's age, so 16 pickers share one fetch).
+  fetch_interval: 300
   copy_files: []
   symlink_files: []
 
@@ -126,11 +155,143 @@ worktrees:
       if_exists: "pyproject.toml"
 
 zellij:
-  # Multi-agent layout bundled with this package. Also accepts a layout name
-  # from ~/.config/zellij/layouts/ or an explicit path (see resolve_layout()
-  # in utils/layouts.py). Set to null for Zellij's built-in default.
+  # "agent" renders a hive-owned model layout (layout/tabs.py:session_spec)
+  # on every `hive zellij` start: one tab, agents_per_tab agent panes plus a
+  # control_plane column. "agent-16" is the old hand-maintained 16-pane
+  # session. Also accepts a layout name from ~/.config/zellij/layouts/ or an
+  # explicit path (see resolve_layout() in layout/resolve.py). Set to null
+  # for Zellij's built-in default.
   layout: "agent"
   session_name: "{repo}"
+  # Agent panes in the "agent" layout's tab: 1 or 2.
+  agents_per_tab: 2
+  # Where the status board lives: right or bottom nest it into the agents
+  # tab; none omits it; tab (this default) gives it its own dedicated first
+  # tab (full, uncompacted), with agents starting at tab 2.
+  control_plane: "tab"
+  # Starting arrangement for on-demand agent panes: split (side by side,
+  # this default), stacked (Zellij pane stacking; falls back to split when
+  # control_plane is "right" -- see docs), or tabs (never split -- once
+  # idle slots run out, every further agent opens a new tab, regardless of
+  # agents_per_tab). Switchable live for the rest of a session with the
+  # control plane's `L` hotkey or `hive pane layout <mode>`; this is only
+  # where a fresh session starts.
+  agents_layout: "split"
+  # Hotkeys shipped inside the rendered session file (never touches the
+  # user's own Zellij config). Set a key to null to disable just that one
+  # binding, or enabled: false to disable all of them. new_agent_pane is the
+  # one deliberate exception to "never touches the user's config": it
+  # replaces Zellij's own default Alt+n ("new pane") binding.
+  keybinds:
+    enabled: true
+    new_agent_pane: "Alt n"
+    new_agent_tab: "Alt Shift a"
+    floating_shell: "Alt Shift s"
+    control_plane: "Alt m"
+    worktree_shell: "Alt Shift w"
+  # Command the floating-shell/worktree-shell hotkeys run; null uses $SHELL.
+  floating_shell_command: null
+  # Labels for agent panes c1..c16, in pane-number order. A `hive run`
+  # started on demand (outside the layout) takes the first free pane number
+  # and its label from here.
+  pane_labels:
+    - Anton
+    - Bohdan
+    - Chris
+    - Dmytro
+    - Emily
+    - Frank
+    - Grygoriy
+    - Henry
+    - Ihor
+    - Jake
+    - Kateryna
+    - Liam
+    - Mykola
+    - Noah
+    - Orest
+    - Petro
+  # Fallback names for on-demand pane numbers beyond pane_labels (c17, c18,
+  # ...): one is picked at random, excluding any name already in use, so
+  # opening many more agents than pane_labels has entries still gets real
+  # names instead of a bare "c17".
+  pane_label_pool:
+    - Andriy
+    - Vasyl
+    - Yuriy
+    - Pavlo
+    - Mykhailo
+    - Oleh
+    - Taras
+    - Nazar
+    - Yevhen
+    - Ostap
+    - Sviatoslav
+    - Stepan
+    - Roman
+    - Yaroslav
+    - Viktor
+    - Maksym
+    - Denys
+    - Artem
+    - Kyrylo
+    - Oleksiy
+    - Oleksandr
+    - Serhiy
+    - Volodymyr
+    - Anatoliy
+    - Ivan
+    - Vitaliy
+    - Ruslan
+    - Zenon
+    - Lev
+    - Olena
+    - Olha
+    - Oksana
+    - Solomiya
+    - Yaroslava
+    - Daryna
+    - Ethan
+    - Mason
+    - Logan
+    - Lucas
+    - Jack
+    - Owen
+    - Wyatt
+    - Caleb
+    - Ryan
+    - Tyler
+    - Cody
+    - Blake
+    - Dylan
+    - Austin
+    - Cole
+    - Chase
+    - Trevor
+    - Brett
+    - Shane
+    - Derek
+    - Kyle
+    - Brandon
+    - Justin
+    - Corey
+    - Grant
+    - Miles
+    - Seth
+    - Grace
+    - Chloe
+    - Hazel
+    - Ivy
+    - Lily
+    - Ruby
+    - Nora
+    - Sadie
+
+# Which terminal multiplexer backend `hive session`/`get_mux()` uses. "auto"
+# picks Zellij inside a Zellij session, tmux inside a tmux session, else
+# neither; "zellij"/"tmux" force that backend regardless of environment.
+mux:
+  backend: auto
 
 github:
   fetch_issues: true
@@ -139,3 +300,7 @@ github:
 # Additional directories to pass to the agent via its extra_dirs_flag.
 # Relative paths resolve against the main repo root.
 extra_dirs: []
+
+# User-defined tool tabs: name -> {panes: [{name, command, cwd?, size?, suspended?}]}.
+# A name matching a bundled tab (layout/tabs.py:BUNDLED) overrides it.
+tabs: {}

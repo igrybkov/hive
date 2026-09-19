@@ -15,13 +15,17 @@ from typing import Annotated, Any, ClassVar
 from pydantic import Field
 from pydantic_settings import PydanticBaseSettingsSource
 
+from ..core import trace
 from . import loader
 from .base import HiveBaseSettings
 from .merge import deep_merge
 from .schema import (
     AgentsConfig,
     GitHubConfig,
+    HooksConfig,
+    MuxConfig,
     ResumeConfig,
+    TabConfig,
     WorktreesConfig,
     ZellijConfig,
 )
@@ -81,8 +85,11 @@ class HiveSettings(HiveBaseSettings):
     resume: Annotated[ResumeConfig, Field(default_factory=ResumeConfig)]
     worktrees: Annotated[WorktreesConfig, Field(default_factory=WorktreesConfig)]
     zellij: Annotated[ZellijConfig, Field(default_factory=ZellijConfig)]
+    mux: Annotated[MuxConfig, Field(default_factory=MuxConfig)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
+    tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
+    hooks: Annotated[HooksConfig, Field(default_factory=HooksConfig)]
 
     @classmethod
     def settings_customise_sources(
@@ -118,6 +125,7 @@ def get_settings() -> HiveSettings:
     global _settings
     if _settings is None:
         _settings = HiveSettings()
+        trace.mark("config_loaded")
     return _settings
 
 

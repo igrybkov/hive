@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
+
+import pytest
+from conftest import git
 
 from hive_cli.config import (
     KNOWN_AGENTS,
     AgentConfig,
+    AgentHooksConfig,
+    AgentProfileConfig,
+    HooksConfig,
     deep_merge,
     find_config_files,
     find_global_config,
-    get_extra_dirs_args,
-    get_xdg_config_home,
+    find_project_root,
     load_config,
     reload_config,
 )
@@ -56,22 +60,6 @@ class TestDeepMerge:
         override = {"a": {"b": {"d": 2}}}
         result = deep_merge(base, override)
         assert result == {"a": {"b": {"c": 1, "d": 2}}}
-
-
-class TestXDGConfigHome:
-    """Tests for XDG config home resolution."""
-
-    def test_default_config_home(self, monkeypatch):
-        """Default to ~/.config when XDG_CONFIG_HOME not set."""
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        result = get_xdg_config_home()
-        assert result == Path.home() / ".config"
-
-    def test_custom_config_home(self, monkeypatch):
-        """Use XDG_CONFIG_HOME when set."""
-        monkeypatch.setenv("XDG_CONFIG_HOME", "/custom/config")
-        result = get_xdg_config_home()
-        assert result == Path("/custom/config")
 
 
 class TestFindGlobalConfig:
@@ -171,6 +159,36 @@ class TestFindConfigFiles:
 
         # Order should be: global, project, local
         assert result == [global_config, project_config, local_config]
+
+
+class TestFindProjectRoot:
+    """Tests for find_project_root(): walk-up to .git, no subprocess spawn."""
+
+    def test_find_project_root_from_nested_dir(self, temp_git_repo, monkeypatch):
+        """Chdir into a nested subdirectory still resolves the repo root."""
+        nested = temp_git_repo / "sub" / "dir"
+        nested.mkdir(parents=True)
+        monkeypatch.chdir(nested)
+        assert find_project_root() == temp_git_repo
+
+    def test_find_project_root_in_worktree(self, temp_git_repo, tmp_path, monkeypatch):
+        """A worktree's .git is a *file*; the worktree root itself is returned."""
+        worktree_path = tmp_path / "wt"
+        git("worktree", "add", "-b", "feat", str(worktree_path), cwd=temp_git_repo)
+        assert (worktree_path / ".git").is_file()
+        monkeypatch.chdir(worktree_path)
+        assert find_project_root() == worktree_path
+
+    def test_find_project_root_outside_repo_is_none(self, tmp_path, monkeypatch):
+        """No .git anywhere above cwd → None."""
+        monkeypatch.chdir(tmp_path)
+        assert find_project_root() is None
+
+    def test_no_subprocess_during_config_load(self, fake_proc, monkeypatch):
+        """Config discovery/loading never spawns a process (git or otherwise)."""
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        reload_config()
+        assert fake_proc.calls == []
 
 
 class TestLoadConfig:
@@ -340,6 +358,38 @@ agents:
         assert config.github.issue_limit == 50
 
 
+class TestPaneLabels:
+    def test_default_pane_labels_match_bundled_layout(self):
+        """zellij.pane_labels must be the c1..c16 names from the agent-16 layout."""
+        import re
+        from pathlib import Path
+
+        from hive_cli.config import get_settings
+        from hive_cli.layout.resolve import resolve_layout
+
+        settings = get_settings()
+        resolved = resolve_layout(
+            "agent-16",
+            session="s",
+            hive="/opt/hive",
+            settings=settings,
+            render=lambda spec, hive: "",
+        )
+        kdl = Path(resolved).read_text()
+        found = re.findall(r'pane name="c(\d+): ([^"]+)"', kdl)
+        by_number = {int(n): label for n, label in found}
+        expected = [by_number[n] for n in sorted(by_number)]
+        assert settings.zellij.pane_labels == expected
+        assert len(expected) == 16
+
+    def test_pane_labels_env_csv(self, monkeypatch):
+        from hive_cli.config import get_settings, reset_settings
+
+        monkeypatch.setenv("HIVE_ZELLIJ_PANE_LABELS", "Ann,Bob")
+        reset_settings()
+        assert get_settings().zellij.pane_labels == ["Ann", "Bob"]
+
+
 class TestAgentConfig:
     """Tests for agent-specific configuration."""
 
@@ -365,6 +415,114 @@ class TestAgentConfig:
         # Claude should have --continue from default.yml
         assert config.agents.configs.get("claude") is not None
         assert config.agents.configs["claude"].resume_args == ["--continue"]
+
+
+class TestAgentProfileConfig:
+    """Tests for the AgentProfileConfig schema model."""
+
+    def test_defaults_are_empty(self):
+        """AgentProfileConfig defaults: no config_dir_env, empty dicts."""
+        cfg = AgentProfileConfig()
+        assert cfg.config_dir_env is None
+        assert cfg.extra_env == {}
+        assert cfg.seed_files == {}
+
+    def test_config_dir_env_set(self):
+        cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
+        assert cfg.config_dir_env == "CLAUDE_CONFIG_DIR"
+
+    def test_extra_env_set(self):
+        cfg = AgentProfileConfig(extra_env={"GEMINI_FORCE_FILE_STORAGE": "true"})
+        assert cfg.extra_env == {"GEMINI_FORCE_FILE_STORAGE": "true"}
+
+    def test_seed_files_set(self):
+        cfg = AgentProfileConfig(seed_files={"config.toml": 'key = "value"\n'})
+        assert cfg.seed_files == {"config.toml": 'key = "value"\n'}
+
+
+class TestAgentConfigProfileField:
+    """Tests for profile field on AgentConfig."""
+
+    def test_profile_defaults_to_none(self):
+        cfg = AgentConfig()
+        assert cfg.profile is None
+
+    def test_profile_can_be_set(self):
+        profile_cfg = AgentProfileConfig(config_dir_env="CLAUDE_CONFIG_DIR")
+        cfg = AgentConfig(
+            resume_args=[], skip_permissions_args=[], extra_args=[], profile=profile_cfg
+        )
+        assert cfg.profile is not None
+        assert cfg.profile.config_dir_env == "CLAUDE_CONFIG_DIR"
+
+
+class TestAgentHooksConfig:
+    """Tests for the AgentHooksConfig schema model."""
+
+    def test_defaults_to_unsupported(self):
+        cfg = AgentHooksConfig()
+        assert cfg.mode == "unsupported"
+        assert cfg.note is None
+
+    def test_mode_and_note_can_be_set(self):
+        cfg = AgentHooksConfig(mode="cli", note="replaces a user-configured notify")
+        assert cfg.mode == "cli"
+        assert cfg.note == "replaces a user-configured notify"
+
+    def test_agent_config_hooks_defaults_to_unsupported(self):
+        assert AgentConfig().hooks.mode == "unsupported"
+
+    def test_default_config_agent_hook_modes(self, tmp_path, monkeypatch):
+        """Each bundled agent's hooks.mode matches the F5 spec table."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.delenv("HIVE_AGENTS_ORDER", raising=False)
+
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+
+        configs = config.agents.configs
+        assert configs["claude"].hooks.mode == "cli"
+        assert configs["codex"].hooks.mode == "cli"
+        assert configs["gemini"].hooks.mode == "profile"
+        assert configs["copilot"].hooks.mode == "unsupported"
+        assert configs["agent"].hooks.mode == "unsupported"
+        assert configs["cursor-agent"].hooks.mode == "unsupported"
+
+
+class TestHooksConfig:
+    """Tests for the top-level hooks.enabled setting."""
+
+    def test_disabled_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+        assert config.hooks.enabled is False
+
+    def test_enabled_from_config_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("hooks:\n  enabled: true\n")
+
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            config = load_config()
+        assert config.hooks.enabled is True
+
+    def test_hive_hooks_enabled_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HIVE_HOOKS_ENABLED", "true")
+
+        load_config.cache_clear()
+        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
+            config = load_config()
+        assert config.hooks.enabled is True
+
+    def test_defaults_standalone(self):
+        assert HooksConfig().enabled is False
 
 
 class TestPostCreateCommands:
@@ -524,147 +682,6 @@ agents:
         assert config.agents.configs["claude"].extra_dirs_flag == "--add-dir"
 
 
-class TestGetExtraDirsArgs:
-    """Tests for get_extra_dirs_args helper."""
-
-    def test_empty_when_no_dirs(self, tmp_path, monkeypatch):
-        """Returns empty list when no extra_dirs configured."""
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        load_config.cache_clear()
-        with patch("hive_cli.config.loader.find_config_files", return_value=[]):
-            result = get_extra_dirs_args("claude")
-
-        assert result == []
-
-    def test_empty_when_agent_has_no_flag(self, tmp_path, monkeypatch):
-        """Returns empty list when agent has no extra_dirs_flag."""
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("""
-extra_dirs:
-  - /some/dir
-""")
-
-        load_config.cache_clear()
-        with patch(
-            "hive_cli.config.loader.find_config_files", return_value=[config_file]
-        ):
-            result = get_extra_dirs_args("unknown-agent")
-
-        assert result == []
-
-    def test_builds_flag_path_pairs(self, tmp_path, monkeypatch):
-        """Builds [flag, path, flag, path] pairs for absolute dirs."""
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("""
-extra_dirs:
-  - /abs/dir1
-  - /abs/dir2
-""")
-
-        load_config.cache_clear()
-        with (
-            patch(
-                "hive_cli.config.loader.find_config_files", return_value=[config_file]
-            ),
-            patch("hive_cli.git.get_main_repo", return_value=tmp_path),
-        ):
-            result = get_extra_dirs_args("claude")
-
-        assert result == ["--add-dir", "/abs/dir1", "--add-dir", "/abs/dir2"]
-
-    def test_relative_paths_resolve_against_main_repo(self, tmp_path, monkeypatch):
-        """Relative paths are resolved against main repo root."""
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        main_repo = tmp_path / "main-repo"
-        main_repo.mkdir()
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("""
-extra_dirs:
-  - ../sibling
-""")
-
-        load_config.cache_clear()
-        with (
-            patch(
-                "hive_cli.config.loader.find_config_files", return_value=[config_file]
-            ),
-            patch("hive_cli.git.get_main_repo", return_value=main_repo),
-        ):
-            result = get_extra_dirs_args("claude")
-
-        assert result == ["--add-dir", str(tmp_path / "sibling")]
-
-    def test_runtime_override_replaces_configured_dirs(self, tmp_path, monkeypatch):
-        """When rt.workdir_extras_override is set, it replaces settings.extra_dirs."""
-        from hive_cli.config import get_runtime_settings
-
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("""
-extra_dirs:
-  - /configured/dir
-""")
-
-        load_config.cache_clear()
-        rt = get_runtime_settings()
-        rt.workdir_extras_override = ["/runtime/one", "/runtime/two"]
-        try:
-            with (
-                patch(
-                    "hive_cli.config.loader.find_config_files",
-                    return_value=[config_file],
-                ),
-                patch("hive_cli.git.get_main_repo", return_value=tmp_path),
-            ):
-                result = get_extra_dirs_args("claude")
-        finally:
-            rt.workdir_extras_override = None
-
-        assert result == [
-            "--add-dir",
-            "/runtime/one",
-            "--add-dir",
-            "/runtime/two",
-        ]
-
-    def test_runtime_override_empty_list_produces_no_args(self, tmp_path, monkeypatch):
-        """Empty override list drops all extras even if config has dirs."""
-        from hive_cli.config import get_runtime_settings
-
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("""
-extra_dirs:
-  - /configured/dir
-""")
-
-        load_config.cache_clear()
-        rt = get_runtime_settings()
-        rt.workdir_extras_override = []
-        try:
-            with (
-                patch(
-                    "hive_cli.config.loader.find_config_files",
-                    return_value=[config_file],
-                ),
-                patch("hive_cli.git.get_main_repo", return_value=tmp_path),
-            ):
-                result = get_extra_dirs_args("claude")
-        finally:
-            rt.workdir_extras_override = None
-
-        assert result == []
-
-
 class TestRuntimeWorkdirOverride:
     """Tests for the session-scoped Ctrl+W workdir override."""
 
@@ -699,70 +716,124 @@ class TestRuntimeWorkdirOverride:
         assert "_HIVE_WORKDIR_EXTRAS_SESSION" not in env
 
 
-class TestApplyWorkdirOverride:
-    """Tests for exec_runner._apply_workdir_override."""
+class TestWorktreesFetchInterval:
+    def test_default_is_five_minutes(self):
+        from hive_cli.config import get_settings
 
-    def test_noop_when_no_override(self, tmp_path, monkeypatch):
-        """Without rt.workdir, cwd is not changed and override list stays None."""
-        import os
+        assert get_settings().worktrees.fetch_interval == 300
 
-        from hive_cli.commands.exec_runner import _apply_workdir_override
-        from hive_cli.config import get_runtime_settings
+    def test_env_override(self, monkeypatch):
+        from hive_cli.config import get_settings, reset_settings
 
-        rt = get_runtime_settings()
-        rt.workdir = None
-        rt.workdir_extras_override = None
+        monkeypatch.setenv("HIVE_WORKTREES_FETCH_INTERVAL", "30")
+        reset_settings()
+        assert get_settings().worktrees.fetch_interval == 30
 
-        primary = tmp_path / "primary"
-        primary.mkdir()
-        monkeypatch.chdir(primary)
 
-        _apply_workdir_override(primary)
+class TestZellijLayoutConfig:
+    def test_defaults(self):
+        from hive_cli.config import get_settings
 
-        assert Path(os.getcwd()).resolve() == primary.resolve()
-        assert rt.workdir_extras_override is None
+        settings = get_settings()
+        assert settings.zellij.agents_per_tab == 2
+        assert settings.zellij.control_plane == "tab"
+        assert settings.zellij.agents_layout == "split"
 
-    def test_swap_sets_cwd_and_extras(self, tmp_path, monkeypatch):
-        """Override: cwd→chosen, primary prepended to extras, chosen dropped."""
-        import os
+    def test_agents_per_tab_rejects_invalid_value(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
 
-        from hive_cli.commands.exec_runner import _apply_workdir_override
-        from hive_cli.config import get_runtime_settings, load_config
-
-        primary = tmp_path / "primary"
-        primary.mkdir()
-        chosen = tmp_path / "chosen"
-        chosen.mkdir()
-        other = tmp_path / "other"
-        other.mkdir()
+        from hive_cli.config import load_config
 
         config_file = tmp_path / ".hive.yml"
-        config_file.write_text(
-            f"""
-extra_dirs:
-  - {chosen}
-  - {other}
-"""
-        )
+        config_file.write_text("zellij:\n  agents_per_tab: 3\n")
         load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            with pytest.raises(ValidationError):
+                load_config()
 
-        rt = get_runtime_settings()
-        rt.workdir = chosen
-        rt.workdir_extras_override = None
+    def test_control_plane_accepts_tab(self, tmp_path, monkeypatch):
+        from hive_cli.config import load_config
 
-        monkeypatch.chdir(primary)
-        try:
-            with (
-                patch(
-                    "hive_cli.config.loader.find_config_files",
-                    return_value=[config_file],
-                ),
-                patch("hive_cli.git.get_main_repo", return_value=tmp_path),
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("zellij:\n  control_plane: tab\n")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            assert load_config().zellij.control_plane == "tab"
+
+    def test_control_plane_rejects_invalid_value(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
+
+        from hive_cli.config import load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("zellij:\n  control_plane: sideways\n")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            with pytest.raises(ValidationError):
+                load_config()
+
+    def test_agents_layout_accepts_stacked_and_tabs(self, tmp_path, monkeypatch):
+        from hive_cli.config import load_config
+
+        for mode in ("split", "stacked", "tabs"):
+            config_file = tmp_path / ".hive.yml"
+            config_file.write_text(f"zellij:\n  agents_layout: {mode}\n")
+            load_config.cache_clear()
+            with patch(
+                "hive_cli.config.loader.find_config_files", return_value=[config_file]
             ):
-                _apply_workdir_override(primary)
+                assert load_config().zellij.agents_layout == mode
 
-            assert Path(os.getcwd()).resolve() == chosen.resolve()
-            assert rt.workdir_extras_override == [str(primary), str(other)]
-        finally:
-            rt.workdir = None
-            rt.workdir_extras_override = None
+    def test_agents_layout_rejects_invalid_value(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
+
+        from hive_cli.config import load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("zellij:\n  agents_layout: sideways\n")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            with pytest.raises(ValidationError):
+                load_config()
+
+
+class TestTabsConfig:
+    def test_default_empty(self):
+        from hive_cli.config import get_settings
+
+        assert get_settings().tabs == {}
+
+    def test_parsed_into_tab_config(self, tmp_path, monkeypatch):
+        from hive_cli.config import TabConfig, load_config
+
+        config_file = tmp_path / ".hive.yml"
+        config_file.write_text("""
+tabs:
+  git:
+    panes:
+      - name: lazygit
+        command: "lazygit"
+        size: "70%"
+      - name: git-shell
+        command: ["fish"]
+        suspended: true
+""")
+        load_config.cache_clear()
+        with patch(
+            "hive_cli.config.loader.find_config_files", return_value=[config_file]
+        ):
+            config = load_config()
+
+        assert isinstance(config.tabs["git"], TabConfig)
+        assert config.tabs["git"].panes[0].name == "lazygit"
+        assert config.tabs["git"].panes[0].command == "lazygit"
+        assert config.tabs["git"].panes[1].command == ["fish"]
+        assert config.tabs["git"].panes[1].suspended is True
