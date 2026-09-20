@@ -497,7 +497,7 @@ agents:
 
     codex:
       resume_args: ["resume", "--last"]
-      skip_permissions_args: ["--full-auto"]
+      skip_permissions_args: ["-a", "on-request", "-s", "workspace-write"]
       extra_dirs_flag: "--add-dir"
 
     gemini:
@@ -663,7 +663,7 @@ hooks:
 |-------|-------------|----------------------|-----------------|
 | claude | `["--continue"]` | `["--dangerously-skip-permissions"]` | `--add-dir` |
 | copilot | `["--continue"]` | `["--allow-all"]` | `--add-dir` |
-| codex | `["resume", "--last"]` | `["--full-auto"]` | `--add-dir` |
+| codex | `["resume", "--last"]` | `["-a", "on-request", "-s", "workspace-write"]` | `--add-dir` |
 | gemini | `["--resume", "latest"]` | `["-y"]` | `--include-directories` |
 | agent | `["resume"]` | `["-f"]` | — |
 | cursor-agent | `["resume"]` | `["-f"]` | — |
