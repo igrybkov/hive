@@ -371,7 +371,7 @@ class TestRunResumeAgentSpecific:
             result = cli_runner.invoke(app, ["run", "-a", "codex", "--resume"])
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
-            assert call_args == ["codex", "resume", "--last"]
+            assert call_args == ["codex", "resume", "--last", "--approve-for-me"]
             mock_execvpe.assert_not_called()
             assert result.exit_code == 0
 
@@ -456,7 +456,14 @@ class TestRunResumeAgentSpecific:
             )
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
-            assert call_args == ["codex", "resume", "--last", "--model", "o3"]
+            assert call_args == [
+                "codex",
+                "resume",
+                "--last",
+                "--approve-for-me",
+                "--model",
+                "o3",
+            ]
 
     def test_unknown_agent_without_resume_config(
         self, cli_runner: CycloptsTestRunner, temp_git_repo

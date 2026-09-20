@@ -202,6 +202,23 @@ Change or disable them under `zellij.keybinds` in config (see
 [`zellij.keybinds`](#zellijkeybinds) below) — set a key to `null` to disable
 just that one binding, or `enabled: false` to disable all five.
 
+#### Cycling a tab's layout
+
+`Alt [` and `Alt ]` step through the current tab's layouts: `vertical` (side
+by side), `horizontal` (top and bottom), and `stacked`. These are Zellij's own
+previous/next swap-layout keys, so hive adds no binding. If your own config
+uses `clear-defaults`, bind them yourself:
+`bind "Alt [" { PreviousSwapLayout; }` and `bind "Alt ]" { NextSwapLayout; }`.
+
+hive supplies the three layouts for the `"agent"` session, and every tab opened
+in it inherits them. Two details:
+
+- Zellij counts the tab's starting layout ("BASE") as one stop. On a fresh
+  two-pane agents tab, BASE looks like `vertical`, so one press per loop
+  changes nothing.
+- With `zellij.control_plane: "right"` or `"bottom"` cycling is off. The
+  status pane has a fixed size, and the layouts would flatten it.
+
 Tool tabs (bundled and user-defined) and agent panes also open on demand
 outside the hotkeys, via `hive tab`/`hive pane` — see below.
 
@@ -263,6 +280,7 @@ backend — only the direct CLI/keybind-driven title helpers are Zellij-only).
 A `run-shell` keybind (`Alt n`, etc.) inherits tmux's session but not
 `$TMUX_PANE`, so on-demand panes/tabs split relative to whichever pane is
 currently focused, not literally "the pane the key was pressed in."
+Layout cycling (`Alt [`/`Alt ]`) is Zellij-only; tmux has its own `prefix Space`.
 
 ### `hive wt`
 
@@ -497,7 +515,8 @@ agents:
 
     codex:
       resume_args: ["resume", "--last"]
-      skip_permissions_args: ["-a", "on-request", "-s", "workspace-write"]
+      skip_permissions_args: []
+      extra_args: ["--approve-for-me"]
       extra_dirs_flag: "--add-dir"
 
     gemini:
@@ -663,7 +682,7 @@ hooks:
 |-------|-------------|----------------------|-----------------|
 | claude | `["--continue"]` | `["--dangerously-skip-permissions"]` | `--add-dir` |
 | copilot | `["--continue"]` | `["--allow-all"]` | `--add-dir` |
-| codex | `["resume", "--last"]` | `["-a", "on-request", "-s", "workspace-write"]` | `--add-dir` |
+| codex | `["resume", "--last"]` | `[]` (`extra_args: ["--approve-for-me"]` is always on; codex rejects it alongside sandbox/approval flags) | `--add-dir` |
 | gemini | `["--resume", "latest"]` | `["-y"]` | `--include-directories` |
 | agent | `["resume"]` | `["-f"]` | — |
 | cursor-agent | `["resume"]` | `["-f"]` | — |

@@ -45,9 +45,12 @@ agents:
 
     codex:
       resume_args: ["resume", "--last"]
-      # Old `--full-auto` (removed in codex 0.155): sandboxed, approvals on request.
-      skip_permissions_args: ["-a", "on-request", "-s", "workspace-write"]
-      extra_args: []
+      # --approve-for-me (auto-reviewed approvals in the workspace-write sandbox)
+      # is always on. codex rejects it alongside -a/-s/--dangerously-bypass-*,
+      # so skip_permissions_args stays empty: the skip-permissions toggle is a
+      # no-op for codex (`--full-auto`, its old value, was removed in 0.155).
+      skip_permissions_args: []
+      extra_args: ["--approve-for-me"]
       extra_dirs_flag: "--add-dir"
       profile:
         # CODEX_HOME relocates config, auth (when file-based), and session history.

@@ -683,6 +683,18 @@ def test_open_tab_agents_uses_next_free_pane_id(hive_path):
     assert spec.panes[0].env[0] == ("HIVE_PANE_ID", "2")
 
 
+def test_open_tab_agents_follows_live_stacked_mode(hive_path):
+    """The tab's own shape picks which Alt+[/Alt+] preset comes first (kdl.py
+    rotates to it), so a fresh tab in live "stacked" mode must be stacked or
+    a close+reopen would flip it back to side by side."""
+    write_agents_layout("s", "stacked")
+    mux = FakeMux(session="s", panes=[_pane("3", "t1")])
+    with _live("s", "3", 1):
+        session.open_tab("agents", mux=mux)
+
+    assert mux.named("new_tab")[0][1][0].stacked is True
+
+
 def test_open_tab_agents_pool_labels_dont_repeat_within_the_batch(hive_path):
     """Every slot beyond `pane_labels` draws from `pane_label_pool`, and the
     whole batch is provisioned in one `_fresh_agents_tab_spec` call -- each

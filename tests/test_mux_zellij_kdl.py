@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from hive_cli.layout.model import KeybindSpec, PaneSpec, SessionSpec, TabSpec
 from hive_cli.layout.tabs import agents_tab, tool_tab
 from hive_cli.mux.zellij.kdl import (
@@ -133,11 +135,14 @@ def test_render_tab_file_golden_git():
 
 # A flat, on-demand agents tab (control="none", no nested control-plane
 # pane) -- what `open_tab("agents")` and `new_agent_pane`'s fresh-tab branch
-# actually render. Unlike control="right"/"bottom", this shape gets a
-# `swap_tiled_layout` preset so Zellij keeps re-asserting an even split
-# every time the tab's pane count returns to exactly 2 (after a close and a
-# live re-split), not just at creation time -- `new-pane` has no ratio flag
-# of its own.
+# actually render. It carries three named, unconstrained `swap_tiled_layout`
+# presets (vertical = side by side, horizontal = top/bottom, stacked) that
+# Zellij's Alt+[ / Alt+] cycle through. Order matters: after a pane closes
+# and reopens, Zellij re-applies the first preset that fits, so `vertical`
+# (the tab's own side-by-side shape) comes first -- that is also what keeps
+# the split even, since `new-pane` has no ratio flag of its own. No
+# min_panes/max_panes: Zellij's built-in `stacked` needs min_panes=4, which
+# would exclude every 2-pane agents tab.
 SWAP_TAB_GOLDEN = (
     "\n".join(
         [
@@ -151,11 +156,24 @@ SWAP_TAB_GOLDEN = (
             '            plugin location="status-bar"',
             "        }",
             "    }",
-            "    swap_tiled_layout {",
-            "        tab exact_panes=2 {",
+            '    swap_tiled_layout name="vertical" {',
+            "        tab {",
             '            pane split_direction="vertical" {',
-            "                pane",
-            "                pane",
+            "                children",
+            "            }",
+            "        }",
+            "    }",
+            '    swap_tiled_layout name="horizontal" {',
+            "        tab {",
+            '            pane split_direction="horizontal" {',
+            "                children",
+            "            }",
+            "        }",
+            "    }",
+            '    swap_tiled_layout name="stacked" {',
+            "        tab {",
+            "            pane stacked=true {",
+            "                children",
             "            }",
             "        }",
             "    }",
@@ -187,12 +205,52 @@ def test_render_tab_file_golden_flat_agents_swap_layout():
     assert out.strip() == SWAP_TAB_GOLDEN.strip()
 
 
-def test_swap_layout_absent_for_single_pane_tab():
-    """`n=1` (the "tabs" mode / tab-full-with-1-slot on-demand branch) has
-    nothing to keep even, so no swap_tiled_layout is emitted."""
+def _preset_names(out: str) -> list[str]:
+    return re.findall(r'swap_tiled_layout name="([^"]+)"', out)
+
+
+def test_swap_layouts_present_for_single_pane_tab():
+    """A one-pane agents tab (`n=1`) still carries the cycle presets: the
+    tab can grow by a live split, and stacked must be reachable then."""
     tab = agents_tab(n=1, control="none", hive="/opt/hive", labels=["Anton"])
     out = render_tab_file(tab)
-    assert "swap_" not in out
+    assert _preset_names(out) == ["vertical", "horizontal", "stacked"]
+
+
+def test_flat_agents_presets_have_no_pane_count_constraints():
+    tab = agents_tab(n=2, control="none", hive="/opt/hive", labels=[])
+    out = render_tab_file(tab)
+    for constraint in ("exact_panes", "min_panes", "max_panes"):
+        assert constraint not in out
+
+
+def test_stacked_base_rotates_presets_to_start_with_stacked():
+    """Zellij re-applies the *first* fitting preset after a pane count
+    change, so the first one must match the tab's own shape or a close+
+    reopen would flip the tab's mode."""
+    tab = agents_tab(n=2, control="none", hive="/opt/hive", labels=[], stacked=True)
+    out = render_tab_file(tab)
+    assert _preset_names(out) == ["stacked", "vertical", "horizontal"]
+
+
+def test_control_right_keeps_only_the_unnamed_rebalance_preset():
+    """`children` would flatten the nested "hive" pane into an equal sibling,
+    so control="right" gets no cycle presets -- just its existing preset."""
+    tab = agents_tab(n=2, control="right", hive="/opt/hive", labels=["Anton", "Bohdan"])
+    out = render_tab_file(tab)
+    assert _preset_names(out) == []
+    assert "exact_panes=3" in out
+
+
+def test_session_file_declares_each_preset_once():
+    """Session file with a control tab plus the agents tab: only the agents
+    tab yields presets, so each name appears exactly once."""
+    control = tool_tab("nvim", hive="/opt/hive")
+    agents = agents_tab(n=2, control="none", hive="/opt/hive", labels=[], focus=True)
+    out = render_session_file(
+        SessionSpec(name="s", tabs=(control, agents)), "/opt/hive"
+    )
+    assert _preset_names(out) == ["vertical", "horizontal", "stacked"]
 
 
 def test_swap_layout_absent_for_control_bottom():

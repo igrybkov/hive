@@ -112,77 +112,105 @@ def render_tab_body(t: TabSpec, indent: int = 1) -> str:
     return "\n".join(lines)
 
 
+# Canonical order of the layouts Alt+[ / Alt+] cycle through. "vertical" is
+# Zellij's own name for side by side (a vertical divider), "horizontal" for
+# top/bottom rows.
+_LAYOUT_MODES = ("vertical", "horizontal", "stacked")
+
+
+def _mode_preset(mode: str, indent: int) -> str:
+    """One named `swap_tiled_layout` laying out every pane in the tab as `mode`."""
+    container = (
+        "pane stacked=true"
+        if mode == "stacked"
+        else f"pane split_direction={kdl_string(mode)}"
+    )
+    return "\n".join(
+        [
+            f"{_pad(indent)}swap_tiled_layout name={kdl_string(mode)} {{",
+            f"{_pad(indent + 1)}tab {{",
+            f"{_pad(indent + 2)}{container} {{",
+            f"{_pad(indent + 3)}children",
+            f"{_pad(indent + 2)}}}",
+            f"{_pad(indent + 1)}}}",
+            f"{_pad(indent)}}}",
+        ]
+    )
+
+
 def _swap_tiled_layout(t: TabSpec, indent: int = 1) -> str | None:
-    """A `swap_tiled_layout` preset for `t`, or None when one doesn't apply.
+    """The `swap_tiled_layout` presets for `t`, or None when none apply.
 
-    Zellij re-applies a swap layout automatically whenever a pane opens or
-    closes and the *current* arrangement no longer satisfies it but this one
-    now does (`exact_panes=N`) -- not just at tab-creation time. That's the
-    only native mechanism that keeps a tab evenly split as panes come and
-    go: `zellij action new-pane` has no ratio flag of its own (confirmed
-    against Zellij's own `NewTiledPane`/`NewPane` action definitions -- no
-    width/height/percent field, unlike floating panes), so closing one of
-    two agent panes and splitting a new one back in would otherwise land at
-    whatever ratio Zellij's internal heuristic picks, same as the original
-    30/70 bug this whole approach exists to avoid. This re-triggers on every
-    such close+reopen, for the life of the tab, with no hive code involved
-    at request time.
+    Zellij's Alt+[ / Alt+] (previous/next swap layout) cycle through a
+    tab's swap layouts. Zellij's built-in set only backs its own default
+    layout: a custom `--layout` file with no swap layouts gets none (the
+    keys stay on "BASE"), and one that defines only an unnamed preset has
+    nothing to cycle to. So hive has to supply the layouts worth cycling.
 
-    Two shapes from `agents_tab` are recognised. Flat (`control="none"`):
-    every top-level pane a leaf, none individually sized -- `control=
-    "bottom"` is *also* flat (`hive` prepended as a plain sibling) but is
-    excluded by the "none sized" check, since its `hive` pane carries a
-    fixed `size="25%"` an evenly-split preset would fight every time it
-    re-triggered. Nested (`control="right"`): every pane a leaf except the
+    Flat agents tab (`control="none"`, no individually sized pane): three
+    named presets -- vertical (side by side), horizontal (top/bottom) and
+    stacked -- each just `children` inside the matching container, with no
+    pane-count constraint (Zellij's own `stacked` needs 4+ panes, which
+    would exclude a 2-pane agents tab). Rotated to start with the tab's own
+    shape: after a pane closes and reopens, Zellij re-applies the *first*
+    preset that fits, so the first one must equal the tab's current mode or
+    the tab would flip layout. That re-apply is also what keeps the split
+    even: `zellij action new-pane` has no ratio flag of its own (no
+    width/height/percent field, unlike floating panes), so without it a
+    split back in lands at whatever ratio Zellij's heuristic picks (the
+    original 30/70 bug). Zellij also lists the tab's own layout ("BASE") as
+    one stop in the cycle, and BASE looks the same as the preset it
+    duplicates, so a fresh two-pane tab has one visually dead press per
+    loop. A tab that grew from one pane never shows BASE and cycles
+    cleanly.
+
+    `control="right"` is the one nested shape: every pane a leaf except the
     last, which nests the last agent pane alongside a fixed-size `hive`
-    pane -- the preset mirrors that nesting exactly, hive's own size
-    untouched, and leaves only the *outer* columns (the flat agents and
-    this one nested column) to Zellij's even split; the inner agent/hive
-    split needs no preset since hive's fixed size already determines it.
-    A Zellij pane stack has no meaningful "ratio" to preserve and renders
-    without one either way.
+    pane. `children` would flatten `hive` into an equal sibling, so it gets
+    no cycle presets, only an unnamed `exact_panes` preset mirroring the
+    nesting, which keeps the outer agent columns even across close+reopen.
+    `control="bottom"` is excluded by the "none sized" check (its `hive`
+    pane carries a fixed `size`, which an evenly-split preset would fight)
+    and gets no swap layouts at all.
     """
-    if t.name != "agents" or t.stacked or len(t.panes) < 2:
+    if t.name != "agents":
         return None
-    nested = [p for p in t.panes if p.children]
-    if not nested:
+    if not any(p.children for p in t.panes):
         if any(p.size for p in t.panes):
             return None
-        body = [f"{_pad(indent + 2)}pane split_direction={kdl_string(t.direction)} {{"]
-        body += [f"{_pad(indent + 3)}pane" for _ in t.panes]
-        body.append(f"{_pad(indent + 2)}}}")
-        total = len(t.panes)
-    elif (
-        len(nested) == 1
-        and nested[0] is t.panes[-1]
-        and len(nested[0].children) == 2
-        and not nested[0].children[0].children
-        and not nested[0].children[1].children
-        and nested[0].children[1].size
+        base = "stacked" if t.stacked else t.direction
+        start = _LAYOUT_MODES.index(base) if base in _LAYOUT_MODES else 0
+        modes = _LAYOUT_MODES[start:] + _LAYOUT_MODES[:start]
+        return "\n".join(_mode_preset(m, indent) for m in modes)
+    nested = [p for p in t.panes if p.children]
+    if (
+        t.stacked
+        or len(t.panes) < 2
+        or len(nested) != 1
+        or nested[0] is not t.panes[-1]
+        or len(nested[0].children) != 2
+        or nested[0].children[0].children
+        or nested[0].children[1].children
+        or not nested[0].children[1].size
     ):
-        hive_size = nested[0].children[1].size
-        assert hive_size is not None  # the `and nested[0].children[1].size` check above
-        body = [f"{_pad(indent + 2)}pane split_direction={kdl_string(t.direction)} {{"]
-        body += [f"{_pad(indent + 3)}pane" for _ in t.panes[:-1]]
-        body.append(
-            f"{_pad(indent + 3)}pane split_direction="
-            f"{kdl_string(nested[0].direction)} {{"
-        )
-        body.append(f"{_pad(indent + 4)}pane")
-        body.append(f"{_pad(indent + 4)}pane size={kdl_string(hive_size)}")
-        body.append(f"{_pad(indent + 3)}}}")
-        body.append(f"{_pad(indent + 2)}}}")
-        total = len(t.panes) + 1
-    else:
         return None
-    pad = _pad(indent)
-    inner = _pad(indent + 1)
+    hive_size = nested[0].children[1].size
+    assert hive_size is not None  # the `not ...size` guard above
+    body = [f"{_pad(indent + 2)}pane split_direction={kdl_string(t.direction)} {{"]
+    body += [f"{_pad(indent + 3)}pane" for _ in t.panes[:-1]]
+    body.append(
+        f"{_pad(indent + 3)}pane split_direction={kdl_string(nested[0].direction)} {{"
+    )
+    body.append(f"{_pad(indent + 4)}pane")
+    body.append(f"{_pad(indent + 4)}pane size={kdl_string(hive_size)}")
+    body.append(f"{_pad(indent + 3)}}}")
+    body.append(f"{_pad(indent + 2)}}}")
     lines = [
-        f"{pad}swap_tiled_layout {{",
-        f"{inner}tab exact_panes={total} {{",
+        f"{_pad(indent)}swap_tiled_layout {{",
+        f"{_pad(indent + 1)}tab exact_panes={len(t.panes) + 1} {{",
         *body,
-        f"{inner}}}",
-        f"{pad}}}",
+        f"{_pad(indent + 1)}}}",
+        f"{_pad(indent)}}}",
     ]
     return "\n".join(lines)
 

@@ -63,8 +63,9 @@ class SessionSpec:
     # its pane count changes -- the same re-tile Alt+[/Alt+] does manually,
     # now automatic on every pane add/remove. F2 turned this off because the
     # bundled agent-16.kdl's hand-maintained swap_tiled_layout only matched
-    # one exact pane count; hive's generated tabs define none at all, so
-    # Zellij falls back to its own built-in defaults, which fit any count.
+    # one exact pane count. hive's flat agents tab now defines three
+    # unconstrained named presets (mux/zellij/kdl.py `_swap_tiled_layout`),
+    # which fit any count; other tabs without their own inherit them.
     options: tuple[tuple[str, str], ...] = (
         ("stacked_resize", "false"),
         ("auto_layout", "true"),
