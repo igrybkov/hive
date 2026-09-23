@@ -62,9 +62,9 @@ def new(
     """Create a new agent pane.
 
     Always splits into the target tab, however many agent panes it already
-    has (a fresh one-pane agents tab opens only when there is no target tab
-    at all); the tab's layout reshapes itself by pane count. Prints the new
-    pane's id.
+    has. A fresh one-pane agents tab opens instead when there is no target
+    tab, or the target tab has no agent pane (the control tab, a shell tab).
+    The tab's layout reshapes itself by pane count. Prints the new pane's id.
 
     Examples:
         hive pane new                    # split an agent pane into this tab

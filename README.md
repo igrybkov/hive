@@ -353,8 +353,8 @@ hive pane restart 3                 # restart the agent running in pane 3
 ```
 
 `new` always splits into the target tab, however many agent panes it already
-has (a fresh one-pane agents tab opens only when there is no target tab at
-all) — prints the new pane's id. The tab reshapes itself by pane count (see
+has. A fresh one-pane agents tab opens instead when there is no target tab, or
+the target tab has no agent pane (the control tab, a shell tab) — prints the new pane's id. The tab reshapes itself by pane count (see
 [Agent-pane layout](#agent-pane-layout-grows-with-the-pane-count)).
 `hold -- CMD…` (used by the tmux backend for start-suspended panes) waits for
 Enter before running `CMD`. `set-status`/`set-title` are the same

@@ -340,9 +340,10 @@ def new_agent_pane(
     settings: HiveSettings | None = None,
 ) -> str:
     """Start an idle agent slot, split a new pane into the target tab, or
-    -- only when there's no target tab to split into at all -- open a
-    fresh, one-pane agents tab. No cap: however many agent panes the
-    target tab already has, this always adds to it (G4) -- Zellij's
+    -- when there's no target tab, or the target tab holds no agent pane
+    (the control tab, a shell or git tab) -- open a fresh, one-pane agents
+    tab. No cap: however many agent panes an agents tab already has, this
+    always adds to it (G4) -- Zellij's
     auto_layout/swap-tiled-layout reapply (see mux/zellij/kdl.py) reshapes
     the tab afterward based on the new count; this function never picks or
     passes a rendering mode.
@@ -388,7 +389,7 @@ def new_agent_pane(
         _taken_labels(panes, session), settings.zellij.pane_label_pool
     )
 
-    if target_tab:
+    if existing:
         _refocus_before_split(mux, panes, existing, target_tab)
         argv = _agent_argv(
             hive, number, label, agent=agent, profile=profile, branch=branch

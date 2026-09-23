@@ -405,6 +405,42 @@ def test_new_agent_pane_opens_fresh_tab_only_with_no_current_tab(hive_path):
     assert spec.panes[0].suspended is False
 
 
+def test_new_agent_pane_from_control_tab_opens_agents_tab_instead_of_splitting(
+    hive_path,
+):
+    """Alt+n on the dedicated control tab (only the "hive" board pane, no
+    agent) must not drop an agent into that tab: it would share the board's
+    space and rename the tab after itself. A fresh agents tab is opened."""
+    mux = FakeMux(
+        session="s",
+        panes=[
+            _pane("9", "t0", title="hive", focused=True),
+            _pane("3", "t1", title="c1: Anton"),
+        ],
+    )
+    mux.current_tab_id = lambda: "t0"
+    with _live("s", "3", 1):
+        session.new_agent_pane(mux=mux, settings=HiveSettings())
+
+    assert mux.named("new_pane") == []
+    assert mux.named("focus_pane") == []
+    calls = mux.named("new_tab")
+    assert len(calls) == 1
+    spec = calls[0][1][0]
+    assert spec.name == "agents"
+    assert spec.panes[0].name.startswith("c2")
+
+
+def test_new_agent_pane_explicit_non_agent_tab_opens_agents_tab(hive_path):
+    """The control plane's `n` on a tool-pane row passes that row's tab; a
+    tab with no agent pane (shell, git, ...) is not split into either."""
+    mux = FakeMux(session="s", panes=[_pane("7", "t5", title="lazygit")])
+    session.new_agent_pane(mux=mux, tab_id="t5", settings=HiveSettings())
+
+    assert mux.named("new_pane") == []
+    assert len(mux.named("new_tab")) == 1
+
+
 def test_new_agent_pane_reuses_idle_suspended_pane(hive_path):
     """A never-started pane (c2, e.g. from `hive pane hold`) has no live
     hive socket yet -- only its layout-assigned title identifies it. Pressing
