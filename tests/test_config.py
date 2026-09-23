@@ -735,23 +735,7 @@ class TestZellijLayoutConfig:
         from hive_cli.config import get_settings
 
         settings = get_settings()
-        assert settings.zellij.agents_per_tab == 2
         assert settings.zellij.control_plane == "tab"
-        assert settings.zellij.agents_layout == "split"
-
-    def test_agents_per_tab_rejects_invalid_value(self, tmp_path, monkeypatch):
-        from pydantic import ValidationError
-
-        from hive_cli.config import load_config
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("zellij:\n  agents_per_tab: 3\n")
-        load_config.cache_clear()
-        with patch(
-            "hive_cli.config.loader.find_config_files", return_value=[config_file]
-        ):
-            with pytest.raises(ValidationError):
-                load_config()
 
     def test_control_plane_accepts_tab(self, tmp_path, monkeypatch):
         from hive_cli.config import load_config
@@ -778,31 +762,17 @@ class TestZellijLayoutConfig:
             with pytest.raises(ValidationError):
                 load_config()
 
-    def test_agents_layout_accepts_stacked_and_tabs(self, tmp_path, monkeypatch):
-        from hive_cli.config import load_config
+    def test_new_agent_tab_default_is_alt_shift_n(self):
+        from hive_cli.config.schema import KeybindsConfig
 
-        for mode in ("split", "stacked", "tabs"):
-            config_file = tmp_path / ".hive.yml"
-            config_file.write_text(f"zellij:\n  agents_layout: {mode}\n")
-            load_config.cache_clear()
-            with patch(
-                "hive_cli.config.loader.find_config_files", return_value=[config_file]
-            ):
-                assert load_config().zellij.agents_layout == mode
+        assert KeybindsConfig().new_agent_tab == "Alt Shift n"
 
-    def test_agents_layout_rejects_invalid_value(self, tmp_path, monkeypatch):
-        from pydantic import ValidationError
+    def test_agents_per_tab_and_agents_layout_no_longer_fields(self):
+        from hive_cli.config.schema import ZellijConfig
 
-        from hive_cli.config import load_config
-
-        config_file = tmp_path / ".hive.yml"
-        config_file.write_text("zellij:\n  agents_layout: sideways\n")
-        load_config.cache_clear()
-        with patch(
-            "hive_cli.config.loader.find_config_files", return_value=[config_file]
-        ):
-            with pytest.raises(ValidationError):
-                load_config()
+        assert "agents_per_tab" not in ZellijConfig.model_fields
+        assert "agents_layout" not in ZellijConfig.model_fields
+        assert "agents_layout_stacked_at" not in ZellijConfig.model_fields
 
 
 class TestTabsConfig:

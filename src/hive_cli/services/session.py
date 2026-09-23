@@ -14,7 +14,7 @@ import os
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from pathlib import Path
 
 from ..config import get_settings
@@ -22,7 +22,6 @@ from ..config.settings import HiveSettings
 from ..core import paths
 from ..core.errors import HiveError
 from ..git import WorktreeInfo, get_main_repo, list_worktrees
-from ..layout.model import TabSpec
 from ..layout.resolve import resolve_layout
 from ..layout.tabs import agents_tab, resolve_tab, session_spec
 from ..mux import get_mux
@@ -34,7 +33,6 @@ from ..state import client
 from ..state.pane_state import label_for, next_free_pane_id, random_label
 from ..state.pane_state import pane_hive_id as _pane_hive_id
 from ..state.pane_state import pane_label as _pane_label
-from ..state.session_layout import read_agents_layout, write_agents_layout
 from . import registry
 from .restart import RestartFloor
 
@@ -276,16 +274,35 @@ def _reuse_idle_pane(
 def _refocus_before_split(
     mux: Mux, panes: list[PaneInfo], existing: list[PaneInfo], target_tab: str
 ) -> None:
-    """Move focus onto the last agent pane before splitting a new one in,
-    when the tab's active pane is something else (e.g. the control-plane
-    pane) -- otherwise Zellij's `new-pane --direction right` splits *that*
-    pane instead of the agents."""
+    """Focus an agent pane in the target tab before splitting a new one in:
+    the tab's focused agent pane if it has one, else the last agent pane.
+
+    Always issues the focus call, even when list-panes already reports an
+    agent pane as focused. That flag is per-tab and only tracks tiled
+    panes, so with the floating runner pane the "new pane" hotkey opens
+    holding real focus, it still names the tiled agent pane. Zellij then
+    accepts `new-pane --direction right` (it prints an id) and silently
+    drops the pane. An explicit `focus-pane-id` puts focus on a tiled pane
+    first, which makes the split stick. It also keeps the split from
+    landing next to whatever else is focused, e.g. the control-plane pane.
+    """
     if not existing:
         return
     existing_ids = {p.id for p in existing}
     focused = next((p for p in panes if p.focused and p.tab_id == target_tab), None)
-    if focused is not None and focused.id not in existing_ids:
-        mux.focus_pane(existing[-1].id)
+    target = (
+        focused if focused is not None and focused.id in existing_ids else existing[-1]
+    )
+    mux.focus_pane(target.id)
+
+
+def _split_direction(settings: HiveSettings) -> str:
+    """ "auto" for the count-driven agents tabs (control_plane "tab"/"none"):
+    a directional `new-pane` marks the tab's layout dirty, which switches
+    off auto_layout, so the swap presets would never reshape the tab. The
+    "right"/"bottom" control planes have no such presets, so they keep the
+    plain right split."""
+    return "auto" if settings.zellij.control_plane in ("tab", "none") else "right"
 
 
 def _agent_argv(
@@ -323,43 +340,37 @@ def new_agent_pane(
     settings: HiveSettings | None = None,
 ) -> str:
     """Start an idle agent slot, split a new pane into the target tab, or
-    open a new, fully-provisioned agents tab -- every path ends with a
-    genuinely running agent, never a pane left sitting there dormant.
+    -- only when there's no target tab to split into at all -- open a
+    fresh, one-pane agents tab. No cap: however many agent panes the
+    target tab already has, this always adds to it (G4) -- Zellij's
+    auto_layout/swap-tiled-layout reapply (see mux/zellij/kdl.py) reshapes
+    the tab afterward based on the new count; this function never picks or
+    passes a rendering mode.
 
     An explicit agent/profile/branch always creates a fresh pane -- an idle
-    slot's command is fixed at layout time and can't take overrides. When
-    that fresh pane lands in a brand-new tab, though, the override is
-    currently lost anyway: `_fresh_agents_tab_spec`/`agents_tab` always
-    render `hive run --restart` with no agent/profile/branch baked in
-    (pre-existing; now hit on every full-tab case instead of only when the
-    target tab already had `agents_per_tab` live agents).
+    slot's command is fixed at layout time and can't take overrides. (When
+    that fresh pane lands in a brand-new tab, the override is currently lost
+    anyway: `agents_tab` always renders `hive run --restart` with no
+    agent/profile/branch baked in -- pre-existing.)
     Otherwise, a pane already present in the target tab but never started
-    (agents_tab's `start_suspended` slot, matched by `agent_panes_in_tab`
-    even with no live socket yet) is resumed in place instead of duplicated
-    (`_reuse_idle_pane` calls `mux.resume_pane`, the keystroke that starts
+    is resumed in place instead of duplicated (`_reuse_idle_pane`) --
+    nothing in the default on-demand path creates one of these anymore
+    (`agents_tab` no longer pre-populates placeholders, G4), but `hive pane
+    hold` (F3) still does, directly, so this stays live, not dead code.
+    `_reuse_idle_pane` calls `mux.resume_pane`, the keystroke that starts
     its pending command -- not just `focus_pane`, which would only move the
-    cursor there and leave it dormant) -- `prefer_pane_id`, when it names
-    one of those idle candidates, is the one resumed (G1: the control plane's
+    cursor there and leave it dormant. `prefer_pane_id` (G1), when it names
+    one of those idle candidates, is the one resumed (the control plane's
     `n` passes the row the user actually selected, instead of leaving it to
-    first-idle-found). Failing that, the session's live `agents_layout`
-    (G2, `_agents_layout_mode`) decides what happens next: "tabs" always
-    opens a fresh one-pane tab, ignoring `agents_per_tab`; otherwise, fewer
-    than `settings.zellij.agents_per_tab` agent panes in the target tab ->
-    split right of the *last agent pane* (`_refocus_before_split` guards
-    against splitting whatever else happens to be focused there, e.g. the
-    control-plane pane) -- stacked into it instead of splitting when the
-    mode is "stacked". Otherwise (the target tab is full, or doesn't exist
-    yet) a fresh tab opens via `_fresh_agents_tab_spec` with every
-    `agents_per_tab` slot laid out at once (idle placeholders beyond the
-    first) rather than one pane now and a live split later -- the tab's
-    split ratio is then Zellij's static, even layout-file split, not an
-    unrequestable live `new-pane` ratio. "tabs" mode still gets a genuine
-    one-pane tab, since one agent per tab is that mode's point.
+    first-idle-found).
+
+    A split goes next to an agent pane (`_refocus_before_split` focuses one
+    first). With control_plane "tab"/"none" the direction is left to Zellij's
+    auto_layout (`_split_direction`); otherwise it splits right.
     """
     mux = _mux(mux)
     settings = settings or get_settings()
     session = mux.own_session() or ""
-    mode = _agents_layout_mode(session, settings)
     panes = mux.list_panes()
     target_tab = tab_id or current_tab_id(mux, panes) or ""
     existing = agent_panes_in_tab(panes, target_tab, session) if target_tab else []
@@ -377,36 +388,28 @@ def new_agent_pane(
         _taken_labels(panes, session), settings.zellij.pane_label_pool
     )
 
-    if mode != "tabs" and len(existing) < settings.zellij.agents_per_tab:
+    if target_tab:
         _refocus_before_split(mux, panes, existing, target_tab)
         argv = _agent_argv(
             hive, number, label, agent=agent, profile=profile, branch=branch
         )
-        # --direction and --stacked are two different ways of saying where
-        # the new pane goes; Zellij's own --stacked docs don't pair it with
-        # a direction, so omit "right" rather than guess whether the CLI
-        # accepts (or silently ignores, or errors on) both together.
         # `name` sets the `cN[: label]` title at creation, not after this
         # child's own `hive run` boots -- so a concurrent call's list_panes()
         # sees this number/label as taken right away instead of racing it.
         result = mux.new_pane(
             argv,
-            direction="" if mode == "stacked" else "right",
-            tab_id=target_tab or None,
+            direction=_split_direction(settings),
+            tab_id=target_tab,
             name=f"c{number}: {label}" if label else f"c{number}",
             focus=focus,
-            stacked=mode == "stacked",
         )
     else:
-        n = 1 if mode == "tabs" else settings.zellij.agents_per_tab
-        spec = _fresh_agents_tab_spec(
-            hive=hive,
+        spec = agents_tab(
             first_id=number,
-            n=n,
-            settings=settings,
-            stacked=mode == "stacked",
+            control="none",
+            hive=hive,
+            label=label,
             focus=focus,
-            taken_labels=_taken_labels(panes, session),
         )
         result = mux.new_tab(spec, focus=focus)
     if result is None:
@@ -414,54 +417,10 @@ def new_agent_pane(
     return result
 
 
-def _agents_layout_mode(session: str, settings: HiveSettings) -> str:
-    return read_agents_layout(session, default=settings.zellij.agents_layout)
-
-
-def _fresh_agents_tab_spec(
-    *,
-    hive: str,
-    first_id: int,
-    n: int,
-    settings: HiveSettings,
-    stacked: bool,
-    focus: bool,
-    taken_labels: Collection[str],
-) -> TabSpec:
-    """A brand-new, fully-provisioned agents tab: `n` slots starting at
-    `first_id`, the first live and the rest `start_suspended` idle
-    placeholders (`agents_tab`) -- rendered as one static KDL layout so
-    Zellij's own even split among unsized siblings applies. Deliberately not
-    built by starting with one pane and splitting the rest in later: Zellij's
-    `new-pane --direction right` has no way to request a ratio
-    (`--width`/`--height` require `--floating`; `resize` is relative-only),
-    so a live split of a solo pane can land anywhere, not 50/50.
-
-    Labels beyond `pane_labels` come from `pane_label_pool`, excluding both
-    `taken_labels` and whatever this loop already handed out this batch."""
-    taken = set(taken_labels)
-    labels: list[str] = []
-    for i in range(n):
-        label = label_for(first_id + i, settings.zellij.pane_labels) or random_label(
-            taken, settings.zellij.pane_label_pool
-        )
-        if label:
-            taken.add(label)
-        labels.append(label)
-    return agents_tab(
-        n=n,
-        control="none",
-        hive=hive,
-        labels=labels,
-        first_id=first_id,
-        focus=focus,
-        stacked=stacked,
-    )
-
-
 @registry.op("session.open_tab")
 def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
-    """`resolve_tab(name)` -> `mux.new_tab`; `agents` opens a fresh agents tab."""
+    """`resolve_tab(name)` -> `mux.new_tab`; `agents` opens a fresh one-pane
+    agents tab."""
     mux = _mux(mux)
     settings = get_settings()
     hive = paths.hive_executable()
@@ -469,14 +428,15 @@ def open_tab(name: str, *, mux: Mux | None = None, focus: bool = True) -> str:
         session = mux.own_session() or ""
         panes = mux.list_panes()
         first_id = next_free_pane_id(_taken_pane_ids(panes, session))
-        spec = _fresh_agents_tab_spec(
-            hive=hive,
+        label = label_for(first_id, settings.zellij.pane_labels) or random_label(
+            _taken_labels(panes, session), settings.zellij.pane_label_pool
+        )
+        spec = agents_tab(
             first_id=first_id,
-            n=settings.zellij.agents_per_tab,
-            settings=settings,
-            stacked=_agents_layout_mode(session, settings) == "stacked",
+            control="none",
+            hive=hive,
+            label=label,
             focus=focus,
-            taken_labels=_taken_labels(panes, session),
         )
     else:
         spec = resolve_tab(name, hive=hive, user_tabs=settings.tabs, backend=mux.name)
@@ -535,34 +495,6 @@ def toggle_control_plane(*, mux: Mux | None = None, session: str | None = None) 
         return False
     mux.focus_pane(str(pane_id))
     return True
-
-
-@registry.op("session.get_agents_layout")
-def get_agents_layout(
-    *,
-    session: str | None = None,
-    mux: Mux | None = None,
-    settings: HiveSettings | None = None,
-) -> str:
-    """The session's effective agents_layout: the live override (G2) if one
-    was set, else `settings.zellij.agents_layout`."""
-    session = session or _mux(mux).own_session() or ""
-    settings = settings or get_settings()
-    return _agents_layout_mode(session, settings)
-
-
-@registry.op("session.set_agents_layout")
-def set_agents_layout(
-    mode: str, *, session: str | None = None, mux: Mux | None = None
-) -> str:
-    """Change the session's live agents_layout override (G2) for the rest
-    of the session; raises HiveError on an unrecognized mode."""
-    session = session or _mux(mux).own_session() or ""
-    try:
-        write_agents_layout(session, mode)
-    except ValueError as exc:
-        raise HiveError(str(exc)) from exc
-    return mode
 
 
 @registry.op("session.restart_pane")

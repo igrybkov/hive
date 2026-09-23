@@ -225,9 +225,9 @@ class TmuxMux:
         height: str | None = None,
     ) -> str | None:
         del close_on_exit  # tmux default: `remain-on-exit off`, set once in conf.py
-        del stacked  # tmux has no native pane stacking; G2's stacked mode falls
-        # back to a plain split here (documented divergence, same style as F6's
-        # other backend divergences).
+        if direction == "auto":
+            direction = "right"  # tmux has no layout engine to defer to
+        del stacked  # tmux has no native pane stacking; falls back to a plain split.
         if floating:
             self.popup(
                 argv,

@@ -14,7 +14,7 @@ def test_defaults_produce_five_bindings():
     spec = keybind_spec(KeybindsConfig(), hive="/opt/hive", shell="/bin/zsh")
     assert _keys(spec) == [
         "Alt n",
-        "Alt Shift a",
+        "Alt Shift n",
         "Alt Shift s",
         "Alt m",
         "Alt Shift w",
@@ -32,7 +32,7 @@ def test_one_key_null_drops_just_that_binding():
     spec = keybind_spec(
         KeybindsConfig(control_plane=None), hive="/opt/hive", shell="/bin/zsh"
     )
-    assert _keys(spec) == ["Alt n", "Alt Shift a", "Alt Shift s", "Alt Shift w"]
+    assert _keys(spec) == ["Alt n", "Alt Shift n", "Alt Shift s", "Alt Shift w"]
 
 
 def test_custom_keys_pass_through():

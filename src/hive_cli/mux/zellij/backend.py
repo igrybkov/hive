@@ -92,7 +92,7 @@ def _new_pane_options(
     height: str | None,
 ) -> list[str]:
     opts: list[str] = ["--floating"] if floating else []
-    if not floating and direction:
+    if not floating and direction and direction != "auto":
         opts += ["--direction", direction]
     if cwd:
         opts += ["--cwd", cwd]

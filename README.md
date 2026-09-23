@@ -134,17 +134,16 @@ HIVE_AGENT=gemini hive zellij             # Use Gemini via env var
 
 #### Session layout
 
-The default `zellij.layout: "agent"` renders `zellij.agents_per_tab` (1 or 2)
-agent panes running `hive run --restart`, plus a `hive status --watch` board
-controlled by `zellij.control_plane`: `tab` (the default) gives it its own
-dedicated first tab (full, uncompacted), created right away alongside the
-agents tab, which starts at tab 2 and is the one focused on attach; `right`
-nests a `--compact` pane under the *last* agent
-pane's own column instead (that pane on top, the control plane at the
-bottom); `bottom` gives it a full-width `--compact` row under every agent
-pane; `none` omits it entirely. `tab` renders **two tabs** total; every other
-value renders one, with the agent panes side by side in it. It re-renders on
-every `hive zellij` start — there's no static file to edit.
+The default `zellij.layout: "agent"` renders one agent pane running
+`hive run --restart`, plus a `hive status --watch` board controlled by
+`zellij.control_plane`: `tab` (the default) gives it its own dedicated first
+tab (full, uncompacted), created right away alongside the agents tab, which
+starts at tab 2 and is the one focused on attach; `right` nests a `--compact`
+pane under the agent pane's own column instead (that pane on top, the control
+plane at the bottom); `bottom` gives it a full-width `--compact` row under
+the agent pane; `none` omits it entirely. `tab` renders **two tabs** total;
+every other value renders one. It re-renders on every `hive zellij` start —
+there's no static file to edit. More agents are added on demand (see below).
 Further agent tabs and tool tabs are opened
 on demand (see `layout/tabs.py:BUNDLED` for the bundled tool tabs — `teams`,
 `shell`, `workflow`, `git`, `tests`, `nvim`); add your own or override a
@@ -157,29 +156,33 @@ zellij:
   layout: "agent-16"
 ```
 
-#### Agent-pane layout: split, stacked, tabs
+#### Agent-pane layout: grows with the pane count
 
-`zellij.agents_layout` picks how on-demand agents (`hive pane new`, the
-control plane's `n`) relate to each other, independently of `agents_per_tab`:
+A fresh agents tab always starts with exactly one agent pane. `Alt n` (or
+`hive pane new`, or the control plane's `n`) adds another to the *current*
+tab, however many it already has. It never opens a new tab on its own. To get
+a new tab, use `Alt Shift n` (or `hive tab agents`), which opens a one-pane
+agents tab.
 
-- `split` (default): today's side-by-side panes.
-- `stacked`: Zellij-native pane stacking instead of a split. Falls back to
-  `split` when `zellij.control_plane: "right"` — nesting the status pane
-  into a stack raises questions this doesn't try to answer yet.
-- `tabs`: never split — once idle slots run out, every further agent opens
-  a fresh one-pane tab, regardless of `agents_per_tab`. Pair with
-  `agents_per_tab: 1` for a literal single-pane-per-tab session.
+The tab reshapes itself by pane count:
 
-Switch it live for the rest of a session — without touching config — with
-the control plane's `L` hotkey (picks from a list) or:
+| Agent panes | Layout                                                             |
+| ----------- | ------------------------------------------------------------------ |
+| 1           | Full screen                                                        |
+| 2           | Side by side (`split`)                                             |
+| 3           | Grid: two side by side on top, one full-width below (`grid`)       |
+| 4 or more   | The same grid, with the bottom slot turned into a stack (`grid-stacked`) |
 
-```bash
-hive pane layout             # print the effective mode
-hive pane layout stacked     # switch to Zellij-stacked agent panes
-```
+The top two panes stay put as agents 4, 5, … join the stack in the bottom
+slot. Closing a pane walks the same steps back: `grid-stacked`, then `grid`,
+then `split`, then full screen.
 
-A live switch only affects agents created from then on; it never rearranges
-panes already open.
+This applies to `control_plane: "tab"` (the default) and `"none"`. With
+`"right"` or `"bottom"` the layout is not count-driven. Under the tmux
+backend every new pane still splits into the current tab, but tmux gets no
+grid or stack: each pane past the second splits narrower.
+
+To pick a different shape by hand, press `Alt [` / `Alt ]` (see below).
 
 #### Hotkeys
 
@@ -193,7 +196,7 @@ opens a hive-managed agent pane instead of a blank shell.
 | Default key   | Action                       | Runs                                |
 | ------------- | ----------------------------- | ------------------------------------- |
 | `Alt n`       | New agent pane                 | `hive pane new`                       |
-| `Alt Shift a` | New agents tab                 | `hive tab agents`                     |
+| `Alt Shift n` | New agents tab                 | `hive tab agents`                     |
 | `Alt Shift s` | Floating shell here             | `hive wt exec --here -- $SHELL`       |
 | `Alt m`       | Toggle control plane            | `hive status --toggle`                |
 | `Alt Shift w` | Floating shell, pick a worktree | `hive wt exec --worktree - -- $SHELL` |
@@ -204,20 +207,20 @@ just that one binding, or `enabled: false` to disable all five.
 
 #### Cycling a tab's layout
 
-`Alt [` and `Alt ]` step through the current tab's layouts: `vertical` (side
-by side), `horizontal` (top and bottom), and `stacked`. These are Zellij's own
-previous/next swap-layout keys, so hive adds no binding. If your own config
-uses `clear-defaults`, bind them yourself:
+`Alt [` and `Alt ]` step through the layouts that fit the current tab. hive
+supplies `split`, `grid`, `grid-stacked` and `stacked` (the whole tab as one
+stack) for the `"agent"` session, and every tab opened in it inherits them.
+These are Zellij's own previous/next swap-layout keys, so hive adds no
+binding. If your own config uses `clear-defaults`, bind them yourself:
 `bind "Alt [" { PreviousSwapLayout; }` and `bind "Alt ]" { NextSwapLayout; }`.
 
-hive supplies the three layouts for the `"agent"` session, and every tab opened
-in it inherits them. Two details:
+Each layout only fits certain pane counts, so there is usually nothing to
+cycle to. `split` fits exactly 2 panes, `grid` exactly 3, and `grid-stacked`
+and `stacked` fit 4 or more. With 4 or more panes, `Alt ]` toggles between
+the two.
 
-- Zellij counts the tab's starting layout ("BASE") as one stop. On a fresh
-  two-pane agents tab, BASE looks like `vertical`, so one press per loop
-  changes nothing.
-- With `zellij.control_plane: "right"` or `"bottom"` cycling is off. The
-  status pane has a fixed size, and the layouts would flatten it.
+With `zellij.control_plane: "right"` or `"bottom"` cycling is off. The
+status pane has a fixed size, and the layouts would flatten it.
 
 Tool tabs (bundled and user-defined) and agent panes also open on demand
 outside the hotkeys, via `hive tab`/`hive pane` — see below.
@@ -347,26 +350,24 @@ hive pane list --json               # same, as JSON
 hive pane focus 3                   # focus pane 3
 hive pane close 3                   # close pane 3
 hive pane restart 3                 # restart the agent running in pane 3
-hive pane layout                    # print the session's live layout mode
-hive pane layout stacked            # switch new agents to Zellij-stacked panes
 ```
 
-`new` splits into the target tab if it has room for another agent pane
-(`zellij.agents_per_tab`), else it opens a fresh one-pane agents tab —
-prints the new pane's id either way (see [Agent-pane
-layout](#agent-pane-layout-split-stacked-tabs) for `stacked`/`tabs`
-modes). `hold -- CMD…` (used by the tmux backend for start-suspended panes)
-waits for Enter before running `CMD`. `set-status`/`set-title` are the same
+`new` always splits into the target tab, however many agent panes it already
+has (a fresh one-pane agents tab opens only when there is no target tab at
+all) — prints the new pane's id. The tab reshapes itself by pane count (see
+[Agent-pane layout](#agent-pane-layout-grows-with-the-pane-count)).
+`hold -- CMD…` (used by the tmux backend for start-suspended panes) waits for
+Enter before running `CMD`. `set-status`/`set-title` are the same
 as `hive zellij set-status`/`set-title`, kept under both names.
 
 ### `hive tab`
 
 Open tool tabs and agent tabs on demand — the CLI surface behind the
-`Alt Shift a` hotkey.
+`Alt Shift n` hotkey.
 
 ```bash
 hive tab git              # open the bundled git tab
-hive tab agents           # same as Alt Shift a
+hive tab agents           # same as Alt Shift n
 hive tab mytab            # open a user-defined tab from tabs: config
 hive tab agents --no-focus  # open it without switching focus
 hive tab list             # list every openable tab name (bundled + user + agents)
@@ -413,7 +414,6 @@ hive status -i             # one-shot interactive picker, outputs a path
 | `n`      | New agent pane, targeting the selected row's tab |
 | `t`      | New agents tab (same as `hive tab agents`)       |
 | `T`      | Open a tool tab (pick from bundled/user tabs)    |
-| `L`      | Change the live agent-pane layout (split/stacked/tabs) |
 | `f`      | Floating shell in the selected pane's worktree   |
 | `x`      | Close the selected pane (confirms first)         |
 | `r`      | Restart the agent in the selected pane           |
@@ -626,7 +626,7 @@ zellij:
   keybinds:
     enabled: true
     new_agent_pane: "Alt n"
-    new_agent_tab: "Alt Shift a"
+    new_agent_tab: "Alt Shift n"
     floating_shell: "Alt Shift s"
     control_plane: "Alt m"
     worktree_shell: "Alt Shift w"
@@ -785,36 +785,17 @@ Each item can be:
   built-in default layout. Run `hive zellij layout-path [name]` to see what
   a value resolves to.
 
-#### `zellij.agents_per_tab`
-
-- **Type:** `integer` (`1` or `2`)
-- **Default:** `2`
-- **Description:** Agent panes in the `"agent"` layout's tab.
-
 #### `zellij.control_plane`
 
 - **Type:** `string` (`"right"`, `"bottom"`, `"none"`, or `"tab"`)
 - **Default:** `"tab"`
 - **Description:** Where the `hive status --watch` board lives. `"right"`
-  nests a `--compact` pane under the *last* agent pane's own column (that
+  nests a `--compact` pane under the agent pane's own column (that
   pane on top, the control plane at the bottom); `"bottom"` gives it a
   full-width `--compact` row under every agent pane instead; `"none"` omits
   it entirely; `"tab"` gives it its own dedicated first tab (full,
   uncompacted), created right away alongside the agents tab, which starts at
   tab 2 and is the one focused on attach.
-
-#### `zellij.agents_layout`
-
-- **Type:** `string` (`"split"`, `"stacked"`, or `"tabs"`)
-- **Default:** `"split"`
-- **Description:** Starting arrangement for on-demand agent panes (see
-  [Agent-pane layout](#agent-pane-layout-split-stacked-tabs)). `"split"` is
-  today's side-by-side panes; `"stacked"` uses Zellij pane stacking instead
-  (falls back to `"split"` when `control_plane` is `"right"`); `"tabs"`
-  never splits — once idle slots run out, every further agent opens a new
-  tab, regardless of `agents_per_tab`. Switchable live for the rest of a
-  session with the control plane's `L` hotkey or `hive pane layout <mode>`,
-  which don't touch this config value.
 
 #### `zellij.session_name`
 
@@ -854,7 +835,7 @@ Each item can be:
     five bindings.
   - **`keybinds.new_agent_pane`** (`string | null`, default `"Alt n"`):
     `hive pane new`.
-  - **`keybinds.new_agent_tab`** (`string | null`, default `"Alt Shift a"`):
+  - **`keybinds.new_agent_tab`** (`string | null`, default `"Alt Shift n"`):
     `hive tab agents`.
   - **`keybinds.floating_shell`** (`string | null`, default `"Alt Shift s"`):
     `hive wt exec --here`.

@@ -77,6 +77,10 @@ class Mux(Protocol):
     ) -> str | None:
         """Create a pane running argv; returns its id. tab_id: create in that
         tab; focus=False: leave focus where it is; suspended: start-suspended.
+        direction: "right", "down", or "auto" -- leave placement to the
+        multiplexer's own layout engine (Zellij's auto_layout swap layouts,
+        which a directional split marks dirty and switches off); backends
+        without one split right.
         stacked: add to the target's Zellij pane stack instead of splitting
         (G2); backends without native stacking (tmux) ignore it and split.
         """

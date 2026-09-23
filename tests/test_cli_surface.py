@@ -40,7 +40,6 @@ COMMANDS: dict[str, list[str]] = {
         "focus",
         "close",
         "restart",
-        "layout",
         "hold",
         "set-status",
         "set-title",

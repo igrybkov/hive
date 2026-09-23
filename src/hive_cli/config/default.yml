@@ -160,27 +160,22 @@ worktrees:
 
 zellij:
   # "agent" renders a hive-owned model layout (layout/tabs.py:session_spec)
-  # on every `hive zellij` start: one tab, agents_per_tab agent panes plus a
-  # control_plane column. "agent-16" is the old hand-maintained 16-pane
+  # on every `hive zellij` start: one tab with one agent pane (plus a
+  # control_plane column). "agent-16" is the old hand-maintained 16-pane
   # session. Also accepts a layout name from ~/.config/zellij/layouts/ or an
   # explicit path (see resolve_layout() in layout/resolve.py). Set to null
   # for Zellij's built-in default.
   layout: "agent"
   session_name: "{repo}"
-  # Agent panes in the "agent" layout's tab: 1 or 2.
-  agents_per_tab: 2
   # Where the status board lives: right or bottom nest it into the agents
   # tab; none omits it; tab (this default) gives it its own dedicated first
   # tab (full, uncompacted), with agents starting at tab 2.
   control_plane: "tab"
-  # Starting arrangement for on-demand agent panes: split (side by side,
-  # this default), stacked (Zellij pane stacking; falls back to split when
-  # control_plane is "right" -- see docs), or tabs (never split -- once
-  # idle slots run out, every further agent opens a new tab, regardless of
-  # agents_per_tab). Switchable live for the rest of a session with the
-  # control plane's `L` hotkey or `hive pane layout <mode>`; this is only
-  # where a fresh session starts.
-  agents_layout: "split"
+  # A fresh agents tab always starts with one agent pane: Alt+n adds another
+  # to the tab, Alt+Shift+n opens a new tab. With control_plane "tab"/"none"
+  # the tab reshapes itself by pane count: 2 side by side, 3 a grid (2 on
+  # top, 1 full-width below), 4 or more the same grid with the bottom slot
+  # turned into a stack. "right"/"bottom" are not count-driven.
   # Hotkeys shipped inside the rendered session file (never touches the
   # user's own Zellij config). Set a key to null to disable just that one
   # binding, or enabled: false to disable all of them. new_agent_pane is the
@@ -189,7 +184,7 @@ zellij:
   keybinds:
     enabled: true
     new_agent_pane: "Alt n"
-    new_agent_tab: "Alt Shift a"
+    new_agent_tab: "Alt Shift n"
     floating_shell: "Alt Shift s"
     control_plane: "Alt m"
     worktree_shell: "Alt Shift w"

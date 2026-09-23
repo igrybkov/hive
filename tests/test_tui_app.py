@@ -75,7 +75,6 @@ def session_fns():
         open_tab=Mock(return_value="tab1"),
         floating_shell=Mock(),
         restart_pane=session_service.restart_pane,
-        set_agents_layout=Mock(return_value="stacked"),
     )
 
 
@@ -405,29 +404,6 @@ class TestToolTab:
             await pilot.press("escape")
             await pilot.pause(0.2)
             session_fns.open_tab.assert_not_called()
-
-
-class TestAgentsLayout:
-    """G2: 'L' opens a mode picker and changes the live per-session
-    agents_layout override."""
-
-    async def test_pick_sets_layout(self, app, session_fns):
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.press("L")
-            await pilot.pause()
-            await pilot.press("enter")  # first item: AGENTS_LAYOUTS[0] == "split"
-            await _wait_for(pilot, lambda: session_fns.set_agents_layout.called)
-            session_fns.set_agents_layout.assert_called_once_with(
-                "split", session="test"
-            )
-
-    async def test_escape_cancels_without_setting(self, app, session_fns):
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.press("L")
-            await pilot.pause()
-            await pilot.press("escape")
-            await pilot.pause(0.2)
-            session_fns.set_agents_layout.assert_not_called()
 
 
 class TestFloatingShell:

@@ -13,12 +13,6 @@ from pydantic_settings import SettingsConfigDict
 
 from .base import HiveBaseSettings
 
-# Kept in sync with state/session_layout.py:AGENTS_LAYOUTS by hand -- config
-# and state are sibling layer-1 packages (see docs/ARCHITECTURE.md), so
-# neither may import the other; duplicating this 3-tuple is cheaper than
-# adding a shared module for one constant.
-_AGENTS_LAYOUTS = ("split", "stacked", "tabs")
-
 
 class AgentProfileConfig(BaseModel):
     """Configuration for per-agent config-dir profiles.
@@ -204,7 +198,7 @@ class KeybindsConfig(BaseModel):
 
     enabled: bool = True
     new_agent_pane: str | None = "Alt n"
-    new_agent_tab: str | None = "Alt Shift a"
+    new_agent_tab: str | None = "Alt Shift n"
     floating_shell: str | None = "Alt Shift s"
     control_plane: str | None = "Alt m"
     worktree_shell: str | None = "Alt Shift w"
@@ -232,18 +226,10 @@ class ZellijConfig(HiveBaseSettings):
             many more agents than `pane_labels` has entries still gets real
             names instead of a bare "c17"; only every name in both lists
             being simultaneously in use falls back to that.
-        agents_per_tab: Agent panes in the rendered "agent" layout's tab (1 or 2).
         control_plane: Where the `hive status --watch` board lives: "right"
             or "bottom" nest a `--compact` pane into the agents tab; "none"
             omits it; "tab" gives it its own dedicated first tab (full,
             uncompacted) with the agents tab starting at tab 2.
-        agents_layout: Starting arrangement for on-demand agent panes: "split"
-            (side by side, the default), "stacked" (Zellij pane stacking), or
-            "tabs" (never split -- once idle slots run out, every further
-            agent opens a new tab, regardless of agents_per_tab). Switchable
-            live for the rest of the session with the control plane's `L`
-            hotkey or `hive pane layout <mode>`; this is just where a fresh
-            session starts.
         keybinds: Hotkeys shipped inside the rendered session file.
         floating_shell_command: Command the floating-shell and
             worktree-shell hotkeys run; None uses `$SHELL`.
@@ -253,9 +239,7 @@ class ZellijConfig(HiveBaseSettings):
 
     layout: str | None = "agent"
     session_name: str = "{repo}"
-    agents_per_tab: int = 2
     control_plane: str = "tab"
-    agents_layout: str = "split"
     keybinds: Annotated[KeybindsConfig, Field(default_factory=KeybindsConfig)]
     floating_shell_command: str | None = None
     pane_labels: list[str] = [
@@ -352,27 +336,11 @@ class ZellijConfig(HiveBaseSettings):
         "Sadie",
     ]
 
-    @field_validator("agents_per_tab")
-    @classmethod
-    def validate_agents_per_tab(cls, v: int) -> int:
-        if v not in (1, 2):
-            raise ValueError("zellij.agents_per_tab must be 1 or 2")
-        return v
-
     @field_validator("control_plane")
     @classmethod
     def validate_control_plane(cls, v: str) -> str:
         if v not in ("right", "bottom", "none", "tab"):
             raise ValueError("zellij.control_plane must be right, bottom, none, or tab")
-        return v
-
-    @field_validator("agents_layout")
-    @classmethod
-    def validate_agents_layout(cls, v: str) -> str:
-        if v not in _AGENTS_LAYOUTS:
-            raise ValueError(
-                f"zellij.agents_layout must be one of {', '.join(_AGENTS_LAYOUTS)}"
-            )
         return v
 
 

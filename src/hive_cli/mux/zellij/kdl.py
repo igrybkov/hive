@@ -33,6 +33,13 @@ default_tab_template {
 ).rstrip("\n")
 
 
+# `default_tab_template`'s tab-bar and status-bar plugin panes count toward a
+# swap layout's `exact_panes` (verified on Zellij 0.45.1): a preset meant for N
+# agent panes must say N + 2, or it never matches and only an unconstrained
+# preset ever applies. `selectable_tiled_panes_count` hides this offset.
+_TEMPLATE_PANES = 2
+
+
 def kdl_string(value: str) -> str:
     """Quote a KDL string literal, escaping backslashes then quotes."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
@@ -112,24 +119,13 @@ def render_tab_body(t: TabSpec, indent: int = 1) -> str:
     return "\n".join(lines)
 
 
-# Canonical order of the layouts Alt+[ / Alt+] cycle through. "vertical" is
-# Zellij's own name for side by side (a vertical divider), "horizontal" for
-# top/bottom rows.
-_LAYOUT_MODES = ("vertical", "horizontal", "stacked")
-
-
-def _mode_preset(mode: str, indent: int) -> str:
-    """One named `swap_tiled_layout` laying out every pane in the tab as `mode`."""
-    container = (
-        "pane stacked=true"
-        if mode == "stacked"
-        else f"pane split_direction={kdl_string(mode)}"
-    )
+def _stacked_preset(indent: int) -> str:
+    """4+ agent panes: the whole tab as one stack, only reachable by hand."""
     return "\n".join(
         [
-            f"{_pad(indent)}swap_tiled_layout name={kdl_string(mode)} {{",
-            f"{_pad(indent + 1)}tab {{",
-            f"{_pad(indent + 2)}{container} {{",
+            f'{_pad(indent)}swap_tiled_layout name="stacked" {{',
+            f"{_pad(indent + 1)}tab min_panes={4 + _TEMPLATE_PANES} {{",
+            f"{_pad(indent + 2)}pane stacked=true {{",
             f"{_pad(indent + 3)}children",
             f"{_pad(indent + 2)}}}",
             f"{_pad(indent + 1)}}}",
@@ -138,50 +134,120 @@ def _mode_preset(mode: str, indent: int) -> str:
     )
 
 
+def _split_preset(indent: int) -> str:
+    """2 agent panes side by side."""
+    return "\n".join(
+        [
+            f'{_pad(indent)}swap_tiled_layout name="split" {{',
+            f"{_pad(indent + 1)}tab exact_panes={2 + _TEMPLATE_PANES} {{",
+            f'{_pad(indent + 2)}pane split_direction="vertical" {{',
+            f"{_pad(indent + 3)}pane",
+            f"{_pad(indent + 3)}pane",
+            f"{_pad(indent + 2)}}}",
+            f"{_pad(indent + 1)}}}",
+            f"{_pad(indent)}}}",
+        ]
+    )
+
+
+def _grid_preset(indent: int) -> str:
+    """3 agent panes: 2 side by side on top, 1 full-width below."""
+    return "\n".join(
+        [
+            f'{_pad(indent)}swap_tiled_layout name="grid" {{',
+            f"{_pad(indent + 1)}tab exact_panes={3 + _TEMPLATE_PANES} {{",
+            f'{_pad(indent + 2)}pane split_direction="horizontal" {{',
+            f'{_pad(indent + 3)}pane split_direction="vertical" {{',
+            f"{_pad(indent + 4)}pane",
+            f"{_pad(indent + 4)}pane",
+            f"{_pad(indent + 3)}}}",
+            f"{_pad(indent + 3)}pane",
+            f"{_pad(indent + 2)}}}",
+            f"{_pad(indent + 1)}}}",
+            f"{_pad(indent)}}}",
+        ]
+    )
+
+
+def _grid_stacked_preset(indent: int) -> str:
+    """4+ agent panes: the grid's top row stays 2 side by side, and every
+    further pane stacks in the bottom slot (pane 3 joins them there)."""
+    return "\n".join(
+        [
+            f'{_pad(indent)}swap_tiled_layout name="grid-stacked" {{',
+            f"{_pad(indent + 1)}tab min_panes={4 + _TEMPLATE_PANES} {{",
+            f'{_pad(indent + 2)}pane split_direction="horizontal" {{',
+            f'{_pad(indent + 3)}pane split_direction="vertical" {{',
+            f"{_pad(indent + 4)}pane",
+            f"{_pad(indent + 4)}pane",
+            f"{_pad(indent + 3)}}}",
+            f"{_pad(indent + 3)}pane stacked=true {{",
+            f"{_pad(indent + 4)}children",
+            f"{_pad(indent + 3)}}}",
+            f"{_pad(indent + 2)}}}",
+            f"{_pad(indent + 1)}}}",
+            f"{_pad(indent)}}}",
+        ]
+    )
+
+
+def _flat_agents_presets(indent: int) -> str:
+    """Named `swap_tiled_layout` presets for a flat "agents" tab
+    (control="none"): `split` (2 agent panes), `grid` (3), `grid-stacked`
+    (4 or more: the grid with its bottom slot turned into a stack) and
+    `stacked` (4 or more: the whole tab as one stack, reachable only by hand
+    with Alt+[ / Alt+]).
+
+    Zellij applies the next preset *after the current one* that fits the new
+    pane count, wrapping around. That decides the order and the constraints:
+    - Growing walks split -> grid -> grid-stacked, one step per added pane.
+    - Shrinking from grid-stacked lands on `grid` only because `stacked`
+      does not fit 3 panes. An unconstrained `stacked` right after
+      `grid-stacked` would win instead and flip the whole tab to a stack.
+    All of this only works for a `new-pane` without `--direction`: a
+    directional split marks the tab's layout dirty and switches `auto_layout`
+    off (verified on Zellij 0.45.1), which is why `new_agent_pane` passes
+    direction "auto". Also part of why this beats a plain split: `zellij
+    action new-pane` has no ratio flag (no width/height/percent, unlike
+    floating panes), so a live split lands at whatever ratio Zellij's
+    heuristic picks (the original 30/70 bug).
+    """
+    return "\n".join(
+        [
+            _split_preset(indent),
+            _grid_preset(indent),
+            _grid_stacked_preset(indent),
+            _stacked_preset(indent),
+        ]
+    )
+
+
 def _swap_tiled_layout(t: TabSpec, indent: int = 1) -> str | None:
     """The `swap_tiled_layout` presets for `t`, or None when none apply.
 
-    Zellij's Alt+[ / Alt+] (previous/next swap layout) cycle through a
-    tab's swap layouts. Zellij's built-in set only backs its own default
-    layout: a custom `--layout` file with no swap layouts gets none (the
-    keys stay on "BASE"), and one that defines only an unnamed preset has
-    nothing to cycle to. So hive has to supply the layouts worth cycling.
+    Zellij's built-in swap layouts only back its own default layout: a
+    custom `--layout` file with no swap layouts gets none, so hive supplies
+    them for the tabs that need them.
 
-    Flat agents tab (`control="none"`, no individually sized pane): three
-    named presets -- vertical (side by side), horizontal (top/bottom) and
-    stacked -- each just `children` inside the matching container, with no
-    pane-count constraint (Zellij's own `stacked` needs 4+ panes, which
-    would exclude a 2-pane agents tab). Rotated to start with the tab's own
-    shape: after a pane closes and reopens, Zellij re-applies the *first*
-    preset that fits, so the first one must equal the tab's current mode or
-    the tab would flip layout. That re-apply is also what keeps the split
-    even: `zellij action new-pane` has no ratio flag of its own (no
-    width/height/percent field, unlike floating panes), so without it a
-    split back in lands at whatever ratio Zellij's heuristic picks (the
-    original 30/70 bug). Zellij also lists the tab's own layout ("BASE") as
-    one stop in the cycle, and BASE looks the same as the preset it
-    duplicates, so a fresh two-pane tab has one visually dead press per
-    loop. A tab that grew from one pane never shows BASE and cycles
-    cleanly.
+    Flat agents tab (`control="none"`, no individually sized pane): the
+    count-driven `split`/`grid`/`grid-stacked`/`stacked` presets
+    (`_flat_agents_presets`).
 
-    `control="right"` is the one nested shape: every pane a leaf except the
-    last, which nests the last agent pane alongside a fixed-size `hive`
-    pane. `children` would flatten `hive` into an equal sibling, so it gets
-    no cycle presets, only an unnamed `exact_panes` preset mirroring the
-    nesting, which keeps the outer agent columns even across close+reopen.
-    `control="bottom"` is excluded by the "none sized" check (its `hive`
-    pane carries a fixed `size`, which an evenly-split preset would fight)
-    and gets no swap layouts at all.
+    `control="right"` is the one nested shape: the agent pane nests alongside
+    a fixed-size `hive` pane. `children` would flatten `hive` into an equal
+    sibling, so it gets no named presets, only an unnamed `exact_panes`
+    preset mirroring the nesting, which keeps the outer agent columns even
+    across close+reopen. `control="bottom"` is excluded by the "none sized"
+    check (its `hive` pane carries a fixed `size`, which an evenly-split
+    preset would fight, zellij-org/zellij#4880) and gets no swap layouts at
+    all.
     """
     if t.name != "agents":
         return None
     if not any(p.children for p in t.panes):
         if any(p.size for p in t.panes):
             return None
-        base = "stacked" if t.stacked else t.direction
-        start = _LAYOUT_MODES.index(base) if base in _LAYOUT_MODES else 0
-        modes = _LAYOUT_MODES[start:] + _LAYOUT_MODES[:start]
-        return "\n".join(_mode_preset(m, indent) for m in modes)
+        return _flat_agents_presets(indent)
     nested = [p for p in t.panes if p.children]
     if (
         t.stacked

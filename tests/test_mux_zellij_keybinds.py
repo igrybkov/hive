@@ -17,7 +17,7 @@ keybinds {
                 close_on_exit true
             }
         }
-        bind "Alt Shift a" {
+        bind "Alt Shift n" {
             Run "/opt/hive" "tab" "agents" {
                 floating true
                 close_on_exit true

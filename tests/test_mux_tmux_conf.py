@@ -19,7 +19,7 @@ set -g status-left "#S "
 set -g window-status-format "#I:#W"
 set -g window-status-current-format "#[bold]#I:#W"
 bind -n M-n display-popup -E -d "#{pane_current_path}" -- /opt/hive pane new
-bind -n M-A display-popup -E -d "#{pane_current_path}" -- /opt/hive tab agents
+bind -n M-N display-popup -E -d "#{pane_current_path}" -- /opt/hive tab agents
 bind -n M-S display-popup -E -d "#{pane_current_path}" -T shell -- /opt/hive wt exec --here -- /bin/zsh
 bind -n M-m display-popup -E -w 80% -h 80% -T hive -- /opt/hive status --toggle
 bind -n M-W display-popup -E -d "#{pane_current_path}" -T shell -- /opt/hive wt exec --worktree - -- /bin/zsh
@@ -31,6 +31,7 @@ bind -n M-W display-popup -E -d "#{pane_current_path}" -T shell -- /opt/hive wt 
     [
         ("Alt a", "M-a"),
         ("Alt Shift a", "M-A"),
+        ("Alt Shift n", "M-N"),
         ("Ctrl a", "C-a"),
         ("Alt Shift s", "M-S"),
         ("Alt Shift w", "M-W"),

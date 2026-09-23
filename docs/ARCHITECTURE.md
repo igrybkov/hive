@@ -52,7 +52,7 @@ hive_cli/
            models.py     shared dataclasses
   config/  schema.py settings.py loader.py merge.py runtime.py   (loader finds the project root by walking up to .git — no spawn)
   state/   pane_state.py PaneState, compose_title, compose_tab_name, pane_hive_id
-           session_layout.py   AGENTS_LAYOUTS, read/write_agents_layout (G2 live agents_layout override)
+           session_layout.py   AGENTS_LAYOUTS, read/write_agents_layout (G2 override; unwired since G4, kept in case a manual override returns)
            protocol.py   NDJSON ops (get/set/subscribe/restart/stop/ping/call), encode/decode
            server.py     PaneStateServer (hive run)          client.py  send/get_state/set_fields/list_pane_sockets
   git/     repo.py worktree.py status.py github.py analysis.py   (facts + effects on git/gh; no prompts, no prints)
@@ -266,8 +266,9 @@ and the `--watch` boards, plus `worktrees.fetch_interval`. F2 (done
 `layout/tabs.py` (`agents_tab`, the bundled tool tabs, `resolve_tab`,
 `session_spec`), `mux/zellij/kdl.py` (render to KDL, golden-tested),
 `layout/resolve.py`'s "agent" render-on-every-start behavior,
-`ZellijMux.new_tab`, and the `agents_per_tab`/`control_plane`/`tabs:`
-config. `zellij.layout: "agent"` now renders a one-tab session instead of
+`ZellijMux.new_tab`, and the `control_plane`/`tabs:` config (plus
+`agents_per_tab`, removed in G4 -- a fresh agents tab is always one pane
+now). `zellij.layout: "agent"` now renders a one-tab session instead of
 pointing at the old static 16-pane file, which moved to `agent-16.kdl`
 (`zellij.layout: "agent-16"` reproduces the old session exactly). F3 (done
 2026-09-07) filled in `layout/keybinds.py` (`keybind_spec()`, mapping the

@@ -239,6 +239,22 @@ class TestZellijMuxNewPane:
         ZellijMux().new_pane(["claude"])
         assert "--stacked" not in fake_proc.calls[-1]
 
+    def test_new_pane_auto_direction_omits_the_flag(self, fake_proc):
+        """A directional split marks the tab's layout dirty, which switches
+        off auto_layout (verified on Zellij 0.45.1); "auto" leaves placement
+        to Zellij so its swap layouts keep applying."""
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_5\n")
+        ZellijMux().new_pane(["claude"], direction="auto", tab_id="1")
+        assert fake_proc.calls[-1] == [
+            "zellij",
+            "action",
+            "new-pane",
+            "--tab-id",
+            "1",
+            "--",
+            "claude",
+        ]
+
     def test_new_pane_floating_has_no_direction(self, fake_proc):
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_6\n")
         ZellijMux().new_pane(["sh"], floating=True)

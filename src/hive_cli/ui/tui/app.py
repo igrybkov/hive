@@ -33,7 +33,6 @@ from ...services import aio
 from ...services import session as session_service
 from ...services import watch as watch_service
 from ...state.pane_state import PaneState, compose_tab_name
-from ...state.session_layout import AGENTS_LAYOUTS
 from . import model
 from .screens import ConfirmScreen, DetailScreen, HelpScreen, TabPickerScreen
 
@@ -44,7 +43,6 @@ HELP_TEXT = "\n".join(
         "n      New agent pane",
         "t      Agents tab",
         "T      Tool tab",
-        "L      Agent-pane layout (split/stacked/tabs)",
         "f      Shell here",
         "x      Close pane",
         "r      Restart pane",
@@ -80,7 +78,6 @@ class ControlPlaneApp(App):
         ("n", "new_agent", "New agent"),
         ("t", "new_agents_tab", "Agents tab"),
         ("T", "tool_tab", "Tool tab"),
-        ("L", "agents_layout", "Layout"),
         ("f", "floating_shell", "Shell here"),
         ("x", "close_pane", "Close"),
         ("r", "restart_pane", "Restart"),
@@ -303,17 +300,6 @@ class ControlPlaneApp(App):
     async def _open_tool_tab(self, name: str | None) -> None:
         if name:
             await aio.call(self._session_fns.open_tab, name, mux=self._mux)
-
-    def action_agents_layout(self) -> None:
-        """Picks the live agents_layout override (G2) -- affects only
-        agents created from now on, never panes already open."""
-        self.push_screen(TabPickerScreen(list(AGENTS_LAYOUTS)), self._set_agents_layout)
-
-    async def _set_agents_layout(self, mode: str | None) -> None:
-        if mode:
-            await aio.call(
-                self._session_fns.set_agents_layout, mode, session=self._session
-            )
 
     async def action_floating_shell(self) -> None:
         worktree = self._selected_worktree()

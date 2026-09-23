@@ -4,6 +4,12 @@ separate process, control plane running or not, and it must survive a
 control-plane restart within the same session. Wiped with the rest of
 `XDG_RUNTIME_DIR` on reboot/logout, which is the correct reset: a live
 override is meant to last "for this session", not forever.
+
+G4 (2026-09) removed this override's only caller (the control plane's `L`
+hotkey and `hive pane layout`) in favor of Zellij's own Alt+[ / Alt+]
+preset cycling -- kept here, unwired, in case a future manual per-session
+override is wanted again; delete once that's settled (see the G4 spec's
+"Reconsidered while drafting" note).
 """
 
 from __future__ import annotations

@@ -59,15 +59,20 @@ class KeybindSpec:
 class SessionSpec:
     name: str
     tabs: tuple[TabSpec, ...]
-    # auto_layout true (G3): Zellij re-applies the tab's swap layout whenever
-    # its pane count changes -- the same re-tile Alt+[/Alt+] does manually,
-    # now automatic on every pane add/remove. F2 turned this off because the
-    # bundled agent-16.kdl's hand-maintained swap_tiled_layout only matched
-    # one exact pane count. hive's flat agents tab now defines three
-    # unconstrained named presets (mux/zellij/kdl.py `_swap_tiled_layout`),
-    # which fit any count; other tabs without their own inherit them.
+    # auto_layout true (G3): Zellij applies the tab's swap layout when a pane
+    # is added -- the same re-tile Alt+[/Alt+] does manually. A directional
+    # `new-pane` marks the layout dirty and disables it. F2 turned this off
+    # because the bundled agent-16.kdl's hand-maintained swap_tiled_layout only
+    # matched one exact pane count. hive's flat agents tab now defines
+    # count-driven named presets (mux/zellij/kdl.py `_flat_agents_presets`);
+    # the preset blocks are layout-scoped, so other tabs in the same session
+    # file see them too.
+    # stacked_pane_list false (G4) works around Zellij 0.45's stacked-pane
+    # list rendering bugs (#4656, #4370, #3110, #3675); harmless when
+    # nothing in the session is stacked.
     options: tuple[tuple[str, str], ...] = (
         ("stacked_resize", "false"),
         ("auto_layout", "true"),
+        ("stacked_pane_list", "false"),
     )
     keybinds: KeybindSpec = KeybindSpec()

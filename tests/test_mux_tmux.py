@@ -108,6 +108,13 @@ def test_new_pane_split_right(fake_proc, monkeypatch):
     ]
 
 
+def test_new_pane_auto_direction_splits_right(fake_proc):
+    """ "auto" defers to a layout engine; tmux has none, so it splits right."""
+    fake_proc.script(("tmux", "-L", "hive", "split-window"), stdout="%7\n")
+    TmuxMux().new_pane(["claude"], direction="auto", tab_id="@1")
+    assert fake_proc.calls[-1][4] == "-h"
+
+
 def test_new_pane_no_focus_adds_d(fake_proc):
     fake_proc.script(("tmux", "-L", "hive", "split-window"), stdout="%8\n")
     TmuxMux().new_pane(["cmd"], focus=False)
@@ -163,9 +170,42 @@ def test_new_pane_names_via_select_pane(fake_proc):
     ]
 
 
-def test_new_tab_applies_all_panes(fake_proc):
+def _agent(n: int, label: str, *, suspended: bool = False) -> PaneSpec:
+    return PaneSpec(
+        name=f"c{n}: {label}",
+        command=("/opt/hive", "run", "--restart"),
+        suspended=suspended,
+        env=(("HIVE_PANE_ID", str(n)), ("HIVE_PANE_LABEL", label)),
+    )
+
+
+def test_new_tab_single_agent_pane_needs_no_split(fake_proc):
+    """`agents_tab` (G4) always builds exactly one live agent pane."""
     spec = agents_tab(
-        n=2, control="none", hive="/opt/hive", labels=["Anton", "Bohdan"], focus=True
+        first_id=1, control="none", hive="/opt/hive", label="Anton", focus=True
+    )
+    fake_proc.script(("tmux", "-L", "hive", "new-window"), stdout="@5\n")
+    window_id = TmuxMux().new_tab(spec, focus=True)
+    assert window_id == "@5"
+    new_window_call = next(c for c in fake_proc.calls if c[3] == "new-window")
+    assert new_window_call[new_window_call.index("--") + 1 :] == [
+        "/usr/bin/env",
+        "HIVE_PANE_ID=1",
+        "HIVE_PANE_LABEL=Anton",
+        "/opt/hive",
+        "run",
+        "--restart",
+    ]
+    assert [c for c in fake_proc.calls if c[3] == "split-window"] == []
+
+
+def test_new_tab_applies_all_panes(fake_proc):
+    """A hand-built two-pane tab (the second suspended, as `hive pane hold`
+    leaves it) -- `agents_tab` itself no longer produces one."""
+    spec = TabSpec(
+        name="agents",
+        panes=(_agent(1, "Anton"), _agent(2, "Bohdan", suspended=True)),
+        focus=True,
     )
     fake_proc.script(("tmux", "-L", "hive", "new-window"), stdout="@5\n")
     window_id = TmuxMux().new_tab(spec, focus=True)
@@ -213,8 +253,21 @@ def test_new_tab_nests_hive_under_last_agent_pane(fake_proc):
     nested layout -- c2 must split *off c1* ("-h", the outer list's
     direction), and hive must then split *off c2* ("-v", the container's own
     direction), in that exact order, or the tree comes out wrong."""
-    spec = agents_tab(
-        n=2, control="right", hive="/opt/hive", labels=["Anton", "Bohdan"], focus=True
+    hive_pane = PaneSpec(
+        name="hive", command=("/opt/hive", "status", "--watch", "--compact"), size="25%"
+    )
+    spec = TabSpec(
+        name="agents",
+        panes=(
+            _agent(1, "Anton"),
+            PaneSpec(
+                name="",
+                command=(),
+                children=(_agent(2, "Bohdan", suspended=True), hive_pane),
+                direction="horizontal",
+            ),
+        ),
+        focus=True,
     )
     fake_proc.script(("tmux", "-L", "hive", "new-window"), stdout="@5\n")
     fake_proc.script(("tmux", "-L", "hive", "split-window"), stdout="%6\n")
@@ -243,14 +296,14 @@ def test_new_tab_nests_hive_under_last_agent_pane(fake_proc):
 
 
 def test_new_tab_n1_control_right_pane0_is_the_agent_not_the_container(fake_proc):
-    """n=1 wraps the *only* agent pane and "hive" into one PaneSpec
+    """One agent pane wraps it and "hive" into one PaneSpec
     container at the top of the tab -- `spec.panes[0]` is that container,
     not a leaf, so pane0 for `new-window` must come from flattening the
     tree, not from indexing `spec.panes` directly (a container has no
     `command`, so indexing it would launch a bare `$SHELL` instead of the
     agent)."""
     spec = agents_tab(
-        n=1, control="right", hive="/opt/hive", labels=["Anton"], focus=True
+        first_id=1, control="right", hive="/opt/hive", label="Anton", focus=True
     )
     fake_proc.script(("tmux", "-L", "hive", "new-window"), stdout="@7\n")
     fake_proc.script(("tmux", "-L", "hive", "split-window"), stdout="%8\n")

@@ -235,7 +235,6 @@ Create and manage agent panes.
 │ close       Close a pane by id.                                                                  │
 │ focus       Focus a pane by id.                                                                  │
 │ hold        Wait for Enter, then run COMMAND (start-suspended panes, F6/tmux).                   │
-│ layout      Show or set this session's live agent-pane layout mode.                              │
 │ list        List panes in the current session, joined with live hive state.                      │
 │ new         Create a new agent pane.                                                             │
 │ restart     Restart the agent in a pane (its hive run re-selects on the next loop).              │
@@ -248,9 +247,9 @@ Usage: hive pane new [ARGS]
 
 Create a new agent pane.                                                                            
 
-Splits into the target tab if it has room (zellij.agents_per_tab), else opens a fresh,              
-fully-provisioned agents tab (idle placeholders fill the rest of the slots). Prints the new pane's  
-id.
+Always splits into the target tab, however many agent panes it already has (a fresh one-pane agents 
+tab opens only when there is no target tab at all); the tab's layout reshapes itself by pane count. 
+Prints the new pane's id.
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
 │ AGENT --agent -a          Agent to run.                                                          │
@@ -301,18 +300,6 @@ Restart the agent in a pane (its hive run re-selects on the next loop).
 
 ╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
 │ *  ID --id  Pane id. [required]                                                                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-=== hive pane layout --help ===
-Usage: hive pane layout [ARGS]
-
-Show or set this session's live agent-pane layout mode.                                             
-
-With no argument, prints the effective mode (the live override if one was set, else                 
-zellij.agents_layout from config). With one, changes it for the rest of the session -- affects only 
-agents created from now on, never panes already open.
-
-╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
-│ MODE --mode  split, stacked, or tabs.                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 === hive pane hold --help ===
 Usage: hive pane hold COMMAND
