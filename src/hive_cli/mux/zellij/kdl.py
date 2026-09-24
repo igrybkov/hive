@@ -151,7 +151,13 @@ def _split_preset(indent: int) -> str:
 
 
 def _grid_preset(indent: int) -> str:
-    """3 agent panes: 2 side by side on top, 1 full-width below."""
+    """3 agent panes: 2 side by side on top, 1 full-width below.
+
+    Zellij numbers a layout's slots breadth-first (top-left, bottom,
+    top-right) and hands a new pane the last one, so the newest pane lands
+    top-right. No tree shape orders the wide bottom slot last;
+    `ZellijMux.new_pane` swaps the new pane down instead.
+    """
     return "\n".join(
         [
             f'{_pad(indent)}swap_tiled_layout name="grid" {{',

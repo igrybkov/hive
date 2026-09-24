@@ -77,6 +77,38 @@ def _tab_info(raw: dict) -> TabInfo:
     )
 
 
+def _is_tiled_terminal(raw: object) -> bool:
+    return (
+        isinstance(raw, dict)
+        and not raw.get("is_plugin")
+        and not raw.get("is_floating")
+    )
+
+
+def _in_top_row_of_two_over_one(tiled: list[dict], new_id: str) -> bool:
+    """True when `tiled` is exactly the "2 over 1" grid (two panes side by
+    side, one full-width pane below them) and `new_id` is one of the top two.
+
+    Zellij fills a swap layout's slots breadth-first, so for this grid the
+    slot order is top-left, *bottom*, top-right, and the newest pane gets the
+    last slot: top-right. The pane that was second lands on the wide bottom
+    instead. Geometry (not slot numbers) is what `list-panes` exposes, so the
+    grid is recognised by its shape, which also keeps a hand-rearranged tab
+    from being touched.
+    """
+    if len(tiled) != 3:
+        return False
+    bottom = max(tiled, key=lambda p: p.get("pane_y", 0))
+    top = [p for p in tiled if p is not bottom]
+    if _pane_id(str(bottom.get("id", ""))) == new_id:
+        return False
+    same_row = top[0].get("pane_y") == top[1].get("pane_y") != bottom.get("pane_y")
+    full_width = bottom.get("pane_columns", 0) >= sum(
+        p.get("pane_columns", 0) for p in top
+    )
+    return same_row and full_width
+
+
 def _new_pane_options(
     *,
     cwd: str | None,
@@ -209,7 +241,38 @@ class ZellijMux:
         result = _run(["zellij", "action", "new-pane", *opts, "--", *argv])
         if result is None:
             return None
-        return _pane_id(result.stdout) or None
+        pane_id = _pane_id(result.stdout) or None
+        if pane_id and direction == "auto" and not floating:
+            self._move_newest_to_bottom(pane_id)
+        return pane_id
+
+    def _move_newest_to_bottom(self, pane_id: str) -> None:
+        """Swap the new pane with the one below it when Zellij's swap layout
+        left it in the top row of the 2-over-1 grid (see
+        `_in_top_row_of_two_over_one`). `move-pane` swaps the panes' slot
+        numbers along with their geometry and leaves auto_layout on
+        (verified on 0.45.1), so the order sticks through later relayouts:
+        panes 4, 5, ... stack in order under c1|c2."""
+        data = _json(_run(["zellij", "action", "list-panes", "--all", "--json"]))
+        if not isinstance(data, list):
+            return
+        new = next(
+            (
+                p
+                for p in data
+                if _is_tiled_terminal(p) and _pane_id(str(p.get("id", ""))) == pane_id
+            ),
+            None,
+        )
+        if new is None:
+            return
+        tiled = [
+            p
+            for p in data
+            if _is_tiled_terminal(p) and p.get("tab_id") == new.get("tab_id")
+        ]
+        if _in_top_row_of_two_over_one(tiled, pane_id):
+            _run(["zellij", "action", "move-pane", "--pane-id", pane_id, "down"])
 
     def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:
         """Write render_tab_file(spec) and `new-tab --layout` it into being.

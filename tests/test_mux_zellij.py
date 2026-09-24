@@ -245,7 +245,7 @@ class TestZellijMuxNewPane:
         to Zellij so its swap layouts keep applying."""
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_5\n")
         ZellijMux().new_pane(["claude"], direction="auto", tab_id="1")
-        assert fake_proc.calls[-1] == [
+        assert fake_proc.calls[0] == [
             "zellij",
             "action",
             "new-pane",
@@ -254,6 +254,104 @@ class TestZellijMuxNewPane:
             "--",
             "claude",
         ]
+
+    @staticmethod
+    def _tiled(id_, x, y, cols, rows, *, tab_id=1, **extra):
+        return {
+            "id": id_,
+            "is_plugin": False,
+            "is_floating": False,
+            "tab_id": tab_id,
+            "pane_x": x,
+            "pane_y": y,
+            "pane_columns": cols,
+            "pane_rows": rows,
+            **extra,
+        }
+
+    def _auto_pane(self, fake_proc, panes, **kwargs):
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_3\n")
+        fake_proc.script(["zellij", "action", "list-panes"], stdout=json.dumps(panes))
+        return ZellijMux().new_pane(["hive", "run"], direction="auto", **kwargs)
+
+    MOVE = ["zellij", "action", "move-pane", "--pane-id", "3", "down"]
+
+    def test_auto_pane_landing_top_right_of_a_grid_is_moved_to_the_bottom(
+        self, fake_proc
+    ):
+        """Zellij fills a swap layout's slots breadth-first: for "2 over 1"
+        that is top-left, *bottom*, top-right, and the newest pane always gets
+        the last slot -- so c3 lands top-right and pushes c2 to the wide
+        bottom. Swapping c3 with the pane below it puts it where it belongs,
+        and (verified on 0.45.1) keeps auto_layout on: later panes then
+        stack in order under c1|c2."""
+        panes = [
+            self._tiled(1, 0, 1, 100, 24),
+            self._tiled(2, 0, 25, 200, 23),
+            self._tiled(3, 100, 1, 100, 24),
+        ]
+        assert self._auto_pane(fake_proc, panes, tab_id="1") == "3"
+        assert fake_proc.calls[-1] == self.MOVE
+
+    def test_auto_pane_already_at_the_bottom_is_left_alone(self, fake_proc):
+        panes = [
+            self._tiled(1, 0, 1, 100, 24),
+            self._tiled(2, 100, 1, 100, 24),
+            self._tiled(3, 0, 25, 200, 23),
+        ]
+        self._auto_pane(fake_proc, panes)
+        assert fake_proc.count("zellij", "action", "move-pane") == 0
+
+    def test_auto_pane_is_only_moved_in_the_exact_two_over_one_grid(self, fake_proc):
+        shapes = {
+            "two panes": [
+                self._tiled(1, 0, 1, 100, 47),
+                self._tiled(3, 100, 1, 100, 47),
+            ],
+            "four panes": [
+                self._tiled(1, 0, 1, 100, 24),
+                self._tiled(2, 0, 25, 200, 1),
+                self._tiled(3, 100, 1, 100, 24),
+                self._tiled(4, 0, 26, 200, 22),
+            ],
+            "left tall, two right": [
+                self._tiled(1, 0, 1, 100, 47),
+                self._tiled(3, 100, 1, 100, 24),
+                self._tiled(2, 100, 25, 100, 23),
+            ],
+        }
+        for name, panes in shapes.items():
+            fake_proc.calls.clear()
+            self._auto_pane(fake_proc, panes)
+            assert fake_proc.count("zellij", "action", "move-pane") == 0, name
+
+    def test_auto_pane_ignores_plugin_floating_and_other_tab_panes(self, fake_proc):
+        noise = [
+            {**self._tiled(0, 0, 0, 200, 1), "is_plugin": True},
+            {**self._tiled(9, 10, 5, 80, 20), "is_floating": True},
+            self._tiled(7, 0, 1, 200, 47, tab_id=2),
+        ]
+        panes = [
+            self._tiled(1, 0, 1, 100, 24),
+            self._tiled(2, 0, 25, 200, 23),
+            self._tiled(3, 100, 1, 100, 24),
+        ]
+        self._auto_pane(fake_proc, noise + panes)
+        assert fake_proc.calls[-1] == self.MOVE
+
+    def test_explicit_direction_and_floating_panes_are_never_probed(self, fake_proc):
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_3\n")
+        ZellijMux().new_pane(["hive", "run"], direction="right")
+        ZellijMux().new_pane(["sh"], direction="auto", floating=True)
+        assert fake_proc.count("zellij", "action", "list-panes") == 0
+
+    def test_a_failing_layout_probe_still_returns_the_new_pane(self, fake_proc):
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_3\n")
+        fake_proc.script(["zellij", "action", "list-panes"], returncode=1)
+        assert ZellijMux().new_pane(["hive", "run"], direction="auto") == "3"
+        fake_proc.script(["zellij", "action", "list-panes"], stdout="not json")
+        assert ZellijMux().new_pane(["hive", "run"], direction="auto") == "3"
+        assert fake_proc.count("zellij", "action", "move-pane") == 0
 
     def test_new_pane_floating_has_no_direction(self, fake_proc):
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_6\n")
