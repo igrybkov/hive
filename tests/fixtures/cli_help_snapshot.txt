@@ -1,0 +1,571 @@
+=== hive --help ===
+Usage: hive COMMAND
+
+Hive - Multi-agent worktree management CLI.                                                         
+
+Manage AI coding agents and git worktrees for parallel development.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ completion      Generate shell completion script.                                                │
+│ config          Manage hive configuration.                                                       │
+│ diff            Show unified diff of all agent worktrees against main branch.                    │
+│ doctor          Check hive's environment and measure startup and hot-path timings.               │
+│ handoff         Manage branch handoff notes.                                                     │
+│ merge-preview   Preview potential merge conflicts between agent branches.                        │
+│ pane            Create and manage agent panes.                                                   │
+│ rebase-check    Check if agent worktrees need rebasing against default branch.                   │
+│ run             Run AI coding agent in current directory.                                        │
+│ session         Open the configured multiplexer (Zellij or tmux) with the AI agent layout.       │
+│ status          Display status of all agent worktrees.                                           │
+│ tab             Open tool tabs and agent tabs on demand.                                         │
+│ task            Manage agent tasks.                                                              │
+│ wt              Manage git worktrees for multi-agent development.                                │
+│ zellij          Open Zellij with AI agent layout.                                                │
+│ --help (-h)     Display this message and exit.                                                   │
+│ --version (-V)  Display application version.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive run --help ===
+Usage: hive run [ARGS]
+
+Run AI coding agent in current directory.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a                     Specific agent to use (overrides auto-detection). [env var: │
+│                                      HIVE_AGENT]                                                 │
+│ WORKTREE --worktree -w               Run in worktree. Use '-' for selection, or specify branch   │
+│                                      name.                                                       │
+│ RESUME --resume -r --no-resume -R    Resume most recent conversation (default from config).      │
+│ RESTART --restart --no-restart       Auto-restart the agent after it exits. Implies -w=- for     │
+│                                      worktree selection. [default: False]                        │
+│ RESTART-CONFIRMATION                 Wait for Enter before each restart. Implies --restart.      │
+│   --restart-confirmation             [default: False]                                            │
+│   --no-restart-confirmation                                                                      │
+│ RESTART-DELAY --restart-delay        Delay in seconds between restarts (default: 0). [default:   │
+│                                      0]                                                          │
+│ SKIP-PERMISSIONS --skip-permissions  Skip permission prompts (default from config).              │
+│   -s --no-skip-permissions -S                                                                    │
+│ PROFILE --profile -p                 Agent config-dir profile to use. Redirects the agent's      │
+│                                      config/history to $XDG_CONFIG_HOME/hive/profiles//. Omit    │
+│                                      (or use 'default') to use the agent's default config dir.   │
+│                                      [env var: HIVE_AGENT_PROFILE]                               │
+│ AUTO-SELECT --auto-select            Auto-select branch after timeout. Shows picker but          │
+│                                      auto-proceeds. Use '-' for repo's default branch. Any key   │
+│                                      cancels timer.                                              │
+│ ARGS --args --empty-args             Additional arguments to pass to the agent. [default: ()]    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive zellij --help ===
+Usage: hive zellij COMMAND [ARGS]
+
+Open Zellij with AI agent layout.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ layout-path  Print the resolved path (or name) for a Zellij layout.                              │
+│ set-status   Set agent status in pane title.                                                     │
+│ set-title    Set custom title suffix in pane title.                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a                Specific agent to use (overrides auto-detection). [env var:      │
+│                                 HIVE_AGENT]                                                      │
+│ RESTART --restart --no-restart  Auto-restart Zellij after it exits. [default: False]             │
+│ RESTART-DELAY --restart-delay   Delay in seconds between restarts (default: 0). [default: 0]     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive zellij set-status --help ===
+Usage: hive zellij set-status [ARGS]
+
+Set agent status in pane title.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ STATUS --status  Agent status (e.g., '[working]').                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive zellij set-title --help ===
+Usage: hive zellij set-title [ARGS]
+
+Set custom title suffix in pane title.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ TITLE --title  Custom title suffix.                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive zellij layout-path --help ===
+Usage: hive zellij layout-path [ARGS]
+
+Print the resolved path (or name) for a Zellij layout.                                              
+
+Useful for running zellij --layout <path> by hand. The bundled "agent" layout renders on every call 
+(session.kdl under hive doctor's state dir); "agent-16" and other bundled/path/passthrough values   
+are static, as before.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ NAME --name                        Layout name to resolve. Defaults to the configured layout.    │
+│ RENDERED --rendered --no-rendered  Explicit request for the rendered 'agent' session file (the   │
+│                                    default already renders it; kept for discoverability).        │
+│                                    [default: False]                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive session --help ===
+Usage: hive session [ARGS]
+
+Open the configured multiplexer (Zellij or tmux) with the AI agent layout.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a                Specific agent to use (overrides auto-detection). [env var:      │
+│                                 HIVE_AGENT]                                                      │
+│ RESTART --restart --no-restart  Auto-restart the multiplexer after it exits. [default: False]    │
+│ RESTART-DELAY --restart-delay   Delay in seconds between restarts (default: 0). [default: 0]     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt --help ===
+Usage: hive wt COMMAND
+
+Manage git worktrees for multi-agent development.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ base    Get the base directory for worktrees.                                                    │
+│ cd      Navigate to a worktree.                                                                  │
+│ create  Create a new worktree for a branch.                                                      │
+│ delete  Delete a worktree.                                                                       │
+│ ensure  Interactive agent workflow - select or create worktree.                                  │
+│ exec    Execute a command in a worktree.                                                         │
+│ exists  Check if a worktree exists.                                                              │
+│ list    List all worktrees in branch:path format.                                                │
+│ parent  Get the main repository path (parent of all worktrees).                                  │
+│ path    Get path for a worktree.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt cd --help ===
+Usage: hive wt cd [ARGS]
+
+Navigate to a worktree.                                                                             
+
+Outputs the worktree path for shell integration. If BRANCH is not specified, shows interactive      
+selection.                                                                                          
+
+Shell integration (fish): function cda set -l path (hive wt cd $argv) and cd $path end
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch  Branch name to navigate to.                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt list --help ===
+Usage: hive wt list
+
+List all worktrees in branch:path format.
+=== hive wt path --help ===
+Usage: hive wt path BRANCH
+
+Get path for a worktree.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  BRANCH --branch  Branch name to get path for. [required]                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt parent --help ===
+Usage: hive wt parent
+
+Get the main repository path (parent of all worktrees).
+=== hive wt create --help ===
+Usage: hive wt create BRANCH [ARGS]
+
+Create a new worktree for a branch.                                                                 
+
+If the branch doesn't exist, creates it from the default branch.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  BRANCH --branch                 Branch name to create worktree for. [required]                │
+│    INSTALL --install --no-install  Install dependencies after creating worktree. [default: True] │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt delete --help ===
+Usage: hive wt delete BRANCH [ARGS]
+
+Delete a worktree.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  BRANCH --branch              Branch name to delete worktree for. [required]                   │
+│    FORCE --force -f --no-force  Force deletion even if worktree has uncommitted changes.         │
+│                                 [default: False]                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt exists --help ===
+Usage: hive wt exists BRANCH
+
+Check if a worktree exists.                                                                         
+
+Exits with code 0 if exists, 1 if not.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  BRANCH --branch  Branch name to check. [required]                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt base --help ===
+Usage: hive wt base
+
+Get the base directory for worktrees.
+=== hive wt exec --help ===
+Usage: hive wt exec [OPTIONS] [ARGS...]
+
+Execute a command in a worktree.
+
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ARGS  Command and args to execute (alternative to -c; put after --).                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ --command -c                 Command to execute (shell string).                                  │
+│ --worktree -w                Run in worktree. Use '-' for selection, 'here' for the worktree of  │
+│                              the current directory, or a branch name.                            │
+│ --here --no-here             Run in the worktree of the current directory (same as -w here).     │
+│                              [default: False]                                                    │
+│ --restart --no-restart       Auto-restart after exit. Implies -w=- for interactive selection.    │
+│                              [default: False]                                                    │
+│ --restart-confirmation       Wait for Enter before each restart. Implies --restart. [default:    │
+│   --no-restart-confirmation  False]                                                              │
+│ --restart-delay              Delay in seconds between restarts (default: 0). [default: 0]        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive wt ensure --help ===
+Usage: hive wt ensure AGENT-NUM
+
+Interactive agent workflow - select or create worktree.                                             
+
+For agent 1, always uses main repo. For other agents, shows interactive selection with:             
+
+ • Fuzzy search through worktrees and branches                                                      
+ • Option to create new branches (ESC)                                                              
+ • Option to delete worktrees
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  AGENT-NUM --agent-num  Agent number. [required]                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane --help ===
+Usage: hive pane COMMAND
+
+Create and manage agent panes.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ close       Close a pane by id.                                                                  │
+│ focus       Focus a pane by id.                                                                  │
+│ hold        Wait for Enter, then run COMMAND (start-suspended panes, F6/tmux).                   │
+│ list        List panes in the current session, joined with live hive state.                      │
+│ new         Create a new agent pane.                                                             │
+│ restart     Restart the agent in a pane (its hive run re-selects on the next loop).              │
+│ set-status  Set agent status in the pane title (same as hive zellij set-status).                 │
+│ set-title   Set custom title suffix in the pane title (same as hive zellij set-title).           │
+│ shell       Open a shell in a worktree.                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane new --help ===
+Usage: hive pane new [ARGS]
+
+Create a new agent pane.                                                                            
+
+Always splits into the target tab, however many agent panes it already has. A fresh one-pane agents 
+tab opens instead when there is no target tab, or the target tab has no agent pane (the control tab,
+a shell tab). The tab's layout reshapes itself by pane count. Prints the new pane's id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT --agent -a          Agent to run.                                                          │
+│ PROFILE --profile -p      Config profile.                                                        │
+│ BRANCH --branch -w        Worktree branch.                                                       │
+│ TAB-ID --tab-id           Target tab id (default: the current tab).                              │
+│ FOCUS --focus --no-focus  Focus the new pane. [default: True]                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane shell --help ===
+Usage: hive pane shell [ARGS]
+
+Open a shell in a worktree.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ WORKTREE --worktree -w             Branch of the worktree to open.                               │
+│ HERE --here --no-here              Use the worktree of the current pane's cwd. [default: False]  │
+│ FLOATING --floating --no-floating  Open as a floating popup instead of a split pane. [default:   │
+│                                    False]                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane list --help ===
+Usage: hive pane list [ARGS]
+
+List panes in the current session, joined with live hive state.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ JSON --json --no-json  Emit JSON. [default: False]                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane focus --help ===
+Usage: hive pane focus ID
+
+Focus a pane by id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane close --help ===
+Usage: hive pane close ID
+
+Close a pane by id.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane restart --help ===
+Usage: hive pane restart ID
+
+Restart the agent in a pane (its hive run re-selects on the next loop).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  ID --id  Pane id. [required]                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane hold --help ===
+Usage: hive pane hold COMMAND
+
+Wait for Enter, then run COMMAND (start-suspended panes, F6/tmux).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  COMMAND --command --empty-command  Command to run once Enter is pressed. [required]           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane set-status --help ===
+Usage: hive pane set-status [ARGS]
+
+Set agent status in the pane title (same as hive zellij set-status).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ STATUS --status  Agent status (e.g., '[working]').                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive pane set-title --help ===
+Usage: hive pane set-title [ARGS]
+
+Set custom title suffix in the pane title (same as hive zellij set-title).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ TITLE --title  Custom title suffix.                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive tab --help ===
+Usage: hive tab COMMAND NAME [ARGS]
+
+Open tool tabs and agent tabs on demand.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ list  List available tab names: 'agents', bundled tool tabs, and user-defined tabs.              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  NAME --name               Tab to open: a bundled/user-defined name, or 'agents'. [required]   │
+│    FOCUS --focus --no-focus  Focus the new tab. [default: True]                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive tab list --help ===
+Usage: hive tab list
+
+List available tab names: 'agents', bundled tool tabs, and user-defined tabs.
+=== hive completion --help ===
+Usage: hive completion SHELL [ARGS]
+
+Generate shell completion script.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  SHELL --shell                   Shell type to generate completion for. [choices: bash, zsh,   │
+│                                    fish] [required]                                              │
+│    INSTALL --install --no-install  Install completion script to appropriate location. [default:  │
+│                                    False]                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive config --help ===
+Usage: hive config COMMAND
+
+Manage hive configuration.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ bootstrap  Create a new config file with documented options.                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive config bootstrap --help ===
+Usage: hive config bootstrap [OPTIONS] [ARGS]
+
+Create a new config file with documented options.                                                   
+
+Without FILE argument, prints the bootstrap config to stdout (pipe to a file or use with -o to      
+save).                                                                                              
+
+With FILE argument, creates a new configuration file at that path with all options commented out and
+documented.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ FILE --file                Path where to create the config file.                                 │
+│ --force -f --no-force      Overwrite existing file. [default: False]                             │
+│ --current -c --no-current  Use current effective config instead of defaults. [default: False]    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive status --help ===
+Usage: hive status [ARGS]
+
+Display status of all agent worktrees.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ WATCH --watch -w --no-watch        Kept for old rendered layouts; folded into the default TUI.   │
+│                                    [default: False]                                              │
+│ COMPACT --compact -c --no-compact  Single-line-per-agent format (only the --plain table).        │
+│                                    [default: False]                                              │
+│ INTERACTIVE --interactive -i       One-shot interactive selection. Outputs path for shell cd.    │
+│   --no-interactive                 [default: False]                                              │
+│ INTERVAL --interval                Control-plane pane/tab discovery interval, floored at 2s.     │
+│                                    [default: 5.0]                                                │
+│ TOGGLE --toggle --no-toggle        Focus the running control plane, or start one (the control    │
+│                                    plane's own pane) if none is running. For the Alt+m hotkey.   │
+│                                    [default: False]                                              │
+│ PLAIN --plain --no-plain           One-shot Rich table for scripts/pipes; never runs the TUI.    │
+│                                    [default: False]                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive task --help ===
+Usage: hive task COMMAND [ARGS]
+
+Manage agent tasks.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ clear  Clear task for an agent.                                                                  │
+│ edit   Edit task in $EDITOR.                                                                     │
+│ set    Set task for an agent.                                                                    │
+│ show   Show task(s).                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ WATCH --watch -w --no-watch  Live board, repainted only when a task changes. q quits. [default:  │
+│                              False]                                                              │
+│ INTERVAL --interval          Seconds between refreshes in watch mode. [default: 5.0]             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive task show --help ===
+Usage: hive task show [ARGS]
+
+Show task(s).                                                                                       
+
+If AGENT_ID is specified, shows task for that agent. Otherwise, shows all tasks.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT-ID --agent-id  Agent identifier.                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive task set --help ===
+Usage: hive task set AGENT-ID TASK-CONTENT
+
+Set task for an agent.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  AGENT-ID --agent-id          Agent identifier. [required]                                     │
+│ *  TASK-CONTENT --task-content  Task description. [required]                                     │
+│      --empty-task-content                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive task edit --help ===
+Usage: hive task edit AGENT-ID
+
+Edit task in $EDITOR.                                                                               
+
+Creates a template if no task exists.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  AGENT-ID --agent-id  Agent identifier. [required]                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive task clear --help ===
+Usage: hive task clear AGENT-ID
+
+Clear task for an agent.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ *  AGENT-ID --agent-id  Agent identifier. [required]                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff --help ===
+Usage: hive handoff COMMAND
+
+Manage branch handoff notes.
+
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ clean   Remove handoff files for branches that no longer exist.                                  │
+│ clear   Clear handoff for a branch.                                                              │
+│ create  Create or update a handoff for a branch.                                                 │
+│ edit    Edit handoff in $EDITOR.                                                                 │
+│ list    List all handoff files.                                                                  │
+│ path    Get the path to a handoff file.                                                          │
+│ show    Show handoff for a branch.                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff list --help ===
+Usage: hive handoff list [ARGS]
+
+List all handoff files.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ ALL --all -a --no-all  Show all handoffs including empty ones. [default: False]                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff show --help ===
+Usage: hive handoff show [ARGS]
+
+Show handoff for a branch.                                                                          
+
+If BRANCH is not specified, shows handoff for current branch.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch  Branch name to show handoff for.                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff create --help ===
+Usage: hive handoff create [ARGS]
+
+Create or update a handoff for a branch.                                                            
+
+If BRANCH is not specified, uses current branch. If MESSAGE is provided, uses it as the summary.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch                    Branch name to create handoff for.                            │
+│ MESSAGE --message --empty-message  Handoff message/summary. [default: ()]                        │
+│ NO-COMMIT --no-commit              Don't prompt to commit uncommitted changes. [default: False]  │
+│   --no-no-commit                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff edit --help ===
+Usage: hive handoff edit [ARGS]
+
+Edit handoff in $EDITOR.                                                                            
+
+If BRANCH is not specified, edits handoff for current branch. Creates a template if no handoff      
+exists.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch  Branch name to edit handoff for.                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff clear --help ===
+Usage: hive handoff clear [ARGS]
+
+Clear handoff for a branch.                                                                         
+
+Clears the content but keeps the file (for symlink integrity).
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch  Branch name to clear handoff for.                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff clean --help ===
+Usage: hive handoff clean [ARGS]
+
+Remove handoff files for branches that no longer exist.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ DRY-RUN --dry-run -n --no-dry-run  Show what would be removed without removing. [default: False] │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive handoff path --help ===
+Usage: hive handoff path [ARGS]
+
+Get the path to a handoff file.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ BRANCH --branch  Branch name to get handoff path for.                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive diff --help ===
+Usage: hive diff [ARGS]
+
+Show unified diff of all agent worktrees against main branch.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ STAT --stat -s --no-stat     Show diffstat instead of full diff. [default: False]                │
+│ FILES --files -f --no-files  Show only changed file names. [default: False]                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive rebase-check --help ===
+Usage: hive rebase-check [ARGS]
+
+Check if agent worktrees need rebasing against default branch.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ FETCH --fetch -f --no-fetch  Fetch from origin before checking. [default: False]                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive merge-preview --help ===
+Usage: hive merge-preview [ARGS]
+
+Preview potential merge conflicts between agent branches.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ AGENT-ID --agent-id          Agent identifier to preview merge for.                              │
+│ WATCH --watch -w --no-watch  Live board, repainted only when something changes. q quits.         │
+│                              [default: False]                                                    │
+│ INTERVAL --interval          Seconds between refreshes in watch mode. [default: 5.0]             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+=== hive doctor --help ===
+Usage: hive doctor [ARGS]
+
+Check hive's environment and measure startup and hot-path timings.
+
+╭─ Parameters ─────────────────────────────────────────────────────────────────────────────────────╮
+│ TIMING --timing --no-timing  Time each startup phase (import, config, worktree list, status      │
+│                              collect) and count the commands it spawns. [default: False]         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

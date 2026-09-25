@@ -6,7 +6,7 @@ Pydantic model defaults here are only used as fallbacks during parsing.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import SettingsConfigDict
@@ -37,6 +37,23 @@ class AgentProfileConfig(BaseModel):
     seed_files: Annotated[dict[str, str], Field(default_factory=dict)]
 
 
+class AgentHooksConfig(BaseModel):
+    """How (if at all) an agent's own hook mechanism can be wired to `hive-hook`.
+
+    Attributes:
+        mode: "cli" injects hook config via a CLI flag on every launch
+            (Claude's `--settings`, Codex's `-c notify=...`). "profile" merges
+            hook config into the agent's hive-managed profile directory
+            (Gemini's `.gemini/settings.json`) -- never the user's real config.
+            "unsupported" means hive does not wire hooks for this agent.
+        note: Short caveat shown alongside the mode (e.g. what "cli" replaces,
+            or why the agent is unsupported).
+    """
+
+    mode: Literal["cli", "profile", "unsupported"] = "unsupported"
+    note: str | None = None
+
+
 class AgentConfig(BaseModel):
     """Configuration for a specific AI coding agent.
 
@@ -47,6 +64,7 @@ class AgentConfig(BaseModel):
         extra_dirs_flag: CLI flag the agent uses for additional directories
             (e.g., "--add-dir" for Claude, "--directory" for Cursor).
         profile: Config-dir profile support configuration.
+        hooks: How hive wires this agent's hook mechanism to `hive-hook`.
     """
 
     resume_args: Annotated[list[str], Field(default_factory=list)]
@@ -54,6 +72,7 @@ class AgentConfig(BaseModel):
     extra_args: Annotated[list[str], Field(default_factory=list)]
     extra_dirs_flag: str | None = None
     profile: AgentProfileConfig | None = None
+    hooks: Annotated[AgentHooksConfig, Field(default_factory=AgentHooksConfig)]
 
 
 class AgentsConfig(HiveBaseSettings):
@@ -134,6 +153,8 @@ class WorktreesConfig(HiveBaseSettings):
         symlink_files: Files to symlink from main repo to worktree.
         resume: Default --resume flag for worktree sessions.
         skip_permissions: Default --skip-permissions flag for worktree sessions.
+        fetch_interval: Seconds between `git fetch origin` runs started by the
+            worktree picker (throttled on .git/FETCH_HEAD's age).
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_WORKTREES_")
@@ -146,6 +167,7 @@ class WorktreesConfig(HiveBaseSettings):
     symlink_files: Annotated[list[str], Field(default_factory=list)]
     resume: bool = False
     skip_permissions: bool = False
+    fetch_interval: float = 300.0
 
     @field_validator("post_create", mode="before")
     @classmethod
@@ -156,11 +178,37 @@ class WorktreesConfig(HiveBaseSettings):
         return v
 
 
+class KeybindsConfig(BaseModel):
+    """Hotkeys shipped inside the rendered "agent" session file.
+
+    A key set to None disables that one binding; `enabled: false` disables
+    all of them. Zellij key syntax: "Alt a", "Alt Shift s".
+
+    Attributes:
+        enabled: Master switch for all keybinds below.
+        new_agent_pane: Split-or-tab a new agent pane (`hive pane new`).
+            Defaults to `Alt n`, replacing Zellij's own default "new pane"
+            binding for the life of the session -- the one deliberate
+            exception to this layout never overriding a default Zellij key.
+        new_agent_tab: Open a new agents tab (`hive tab agents`).
+        floating_shell: Floating shell in the current worktree (`hive wt exec --here`).
+        control_plane: Toggle the floating control-plane board (`hive status --toggle`).
+        worktree_shell: Floating shell in a picked worktree (`hive wt exec -w -`).
+    """
+
+    enabled: bool = True
+    new_agent_pane: str | None = "Alt n"
+    new_agent_tab: str | None = "Alt Shift n"
+    floating_shell: str | None = "Alt Shift s"
+    control_plane: str | None = "Alt m"
+    worktree_shell: str | None = "Alt Shift w"
+
+
 class ZellijConfig(HiveBaseSettings):
     """Configuration for Zellij terminal multiplexer.
 
     Attributes:
-        layout: Layout to use, resolved by `utils.layouts.resolve_layout()`.
+        layout: Layout to use, resolved by `layout.resolve.resolve_layout()`.
             Accepts three forms: the name of a layout bundled with this package
             (currently just "agent", the multi-agent layout — resolves to its
             packaged path), the name of a layout in Zellij's own layout dir
@@ -168,12 +216,188 @@ class ZellijConfig(HiveBaseSettings):
             path / anything ending in ".kdl" (expanded via `~`). Defaults to
             "agent". Set to None to use Zellij's built-in default layout.
         session_name: Session name template.
+        pane_labels: Names for agent panes c1..c16, in the order of the
+            bundled layout (`c1: Anton` -> "Anton"). A `hive run` started on
+            demand (outside the layout) takes the first free pane number and
+            its label from this list.
+        pane_label_pool: Fallback names for on-demand pane numbers beyond
+            `pane_labels` (c17, c18, ...). One is picked at random, excluding
+            any name already in use by a live or pending pane, so opening
+            many more agents than `pane_labels` has entries still gets real
+            names instead of a bare "c17"; only every name in both lists
+            being simultaneously in use falls back to that.
+        control_plane: Where the `hive status --watch` board lives: "right"
+            or "bottom" nest a `--compact` pane into the agents tab; "none"
+            omits it; "tab" gives it its own dedicated first tab (full,
+            uncompacted) with the agents tab starting at tab 2.
+        keybinds: Hotkeys shipped inside the rendered session file.
+        floating_shell_command: Command the floating-shell and
+            worktree-shell hotkeys run; None uses `$SHELL`.
     """
 
     model_config = SettingsConfigDict(env_prefix="HIVE_ZELLIJ_")
 
     layout: str | None = "agent"
     session_name: str = "{repo}"
+    control_plane: str = "tab"
+    keybinds: Annotated[KeybindsConfig, Field(default_factory=KeybindsConfig)]
+    floating_shell_command: str | None = None
+    pane_labels: list[str] = [
+        "Anton",
+        "Bohdan",
+        "Chris",
+        "Dmytro",
+        "Emily",
+        "Frank",
+        "Grygoriy",
+        "Henry",
+        "Ihor",
+        "Jake",
+        "Kateryna",
+        "Liam",
+        "Mykola",
+        "Noah",
+        "Orest",
+        "Petro",
+    ]
+    pane_label_pool: list[str] = [
+        # Ukrainian (Ukrainian forms, not Russian ones -- Volodymyr not
+        # Vladimir, Oleksandr not Alexander, Olena not Elena, ...)
+        "Andriy",
+        "Vasyl",
+        "Yuriy",
+        "Pavlo",
+        "Mykhailo",
+        "Oleh",
+        "Taras",
+        "Nazar",
+        "Yevhen",
+        "Ostap",
+        "Sviatoslav",
+        "Stepan",
+        "Roman",
+        "Yaroslav",
+        "Viktor",
+        "Maksym",
+        "Denys",
+        "Artem",
+        "Kyrylo",
+        "Oleksiy",
+        "Oleksandr",
+        "Serhiy",
+        "Volodymyr",
+        "Anatoliy",
+        "Ivan",
+        "Vitaliy",
+        "Ruslan",
+        "Zenon",
+        "Lev",
+        "Olena",
+        "Olha",
+        "Oksana",
+        "Solomiya",
+        "Yaroslava",
+        "Daryna",
+        # American
+        "Ethan",
+        "Mason",
+        "Logan",
+        "Lucas",
+        "Jack",
+        "Owen",
+        "Wyatt",
+        "Caleb",
+        "Ryan",
+        "Tyler",
+        "Cody",
+        "Blake",
+        "Dylan",
+        "Austin",
+        "Cole",
+        "Chase",
+        "Trevor",
+        "Brett",
+        "Shane",
+        "Derek",
+        "Kyle",
+        "Brandon",
+        "Justin",
+        "Corey",
+        "Grant",
+        "Miles",
+        "Seth",
+        "Grace",
+        "Chloe",
+        "Hazel",
+        "Ivy",
+        "Lily",
+        "Ruby",
+        "Nora",
+        "Sadie",
+    ]
+
+    @field_validator("control_plane")
+    @classmethod
+    def validate_control_plane(cls, v: str) -> str:
+        if v not in ("right", "bottom", "none", "tab"):
+            raise ValueError("zellij.control_plane must be right, bottom, none, or tab")
+        return v
+
+
+class MuxConfig(HiveBaseSettings):
+    """Which terminal multiplexer backend `hive session` (and `get_mux()`) uses.
+
+    Attributes:
+        backend: "auto" picks Zellij inside a Zellij session (`ZELLIJ` set),
+            tmux inside a tmux session (`TMUX` set), else neither; "zellij"
+            or "tmux" force that backend regardless of environment.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="HIVE_MUX_")
+
+    backend: Literal["auto", "zellij", "tmux"] = "auto"
+
+
+class PaneConfig(BaseModel):
+    """A single pane in a user-defined `tabs:` entry.
+
+    Attributes:
+        name: Pane name shown in the Zellij tab bar.
+        command: Argv to run in the pane. A string is split with
+            `shlex.split`; empty ("" or []) makes a plain shell pane.
+        cwd: Working directory for the pane.
+        size: Zellij pane size ("30%" or "20" cells).
+        suspended: Start the pane suspended (Enter to launch).
+    """
+
+    name: str
+    command: str | list[str] = ""
+    cwd: str | None = None
+    size: str | None = None
+    suspended: bool = False
+
+
+class TabConfig(BaseModel):
+    """A user-defined tool tab, overriding or adding to `layout.tabs.BUNDLED`.
+
+    Attributes:
+        panes: Panes making up the tab.
+    """
+
+    panes: Annotated[list[PaneConfig], Field(default_factory=list)]
+
+
+class HooksConfig(HiveBaseSettings):
+    """Configuration for agent lifecycle hooks.
+
+    Attributes:
+        enabled: When true, hive injects hook wiring per launch (or into a
+            named profile) so agent lifecycle events reach the pane socket.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="HIVE_HOOKS_")
+
+    enabled: bool = False
 
 
 class GitHubConfig(HiveBaseSettings):
@@ -204,11 +428,16 @@ class HiveConfig(BaseModel):
         github: GitHub integration configuration.
         extra_dirs: Additional directories to pass to the agent.
             Relative paths are resolved against the main repo root.
+        tabs: User-defined tool tabs, keyed by name (override or add to
+            `layout.tabs.BUNDLED`).
+        hooks: Agent lifecycle hooks configuration.
     """
 
     agents: Annotated[AgentsConfig, Field(default_factory=AgentsConfig)]
     resume: Annotated[ResumeConfig, Field(default_factory=ResumeConfig)]
     worktrees: Annotated[WorktreesConfig, Field(default_factory=WorktreesConfig)]
     zellij: Annotated[ZellijConfig, Field(default_factory=ZellijConfig)]
+    tabs: Annotated[dict[str, TabConfig], Field(default_factory=dict)]
     github: Annotated[GitHubConfig, Field(default_factory=GitHubConfig)]
     extra_dirs: Annotated[list[str], Field(default_factory=list)]
+    hooks: Annotated[HooksConfig, Field(default_factory=HooksConfig)]

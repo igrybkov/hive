@@ -68,6 +68,52 @@ HIVE_AGENT_PROFILE=work hive run  # Via env var
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 - `-p, --profile TEXT`: Agent config profile to use (see [Config Profiles](#config-profiles))
 
+#### Pane state sockets
+
+Inside a Zellij session every `hive run` serves its pane's state on a Unix
+socket at `$XDG_RUNTIME_DIR/hive/<session>/<pane>.sock` (or
+`/tmp/hive-$UID/hive/<session>/<pane>.sock` when `XDG_RUNTIME_DIR` is unset)
+and removes it when it exits. The state is one JSON object — pane and tab
+ids, pane number and label, agent, profile, branch, worktree path, status
+(`selecting`, `starting`, `running`, `busy`, `waiting`, `idle`, `done`,
+`exited`), agent pid — and it drives the pane title and the tab name. Read it
+with `nc -U <socket>`: the first line is the current state; send
+`{"op":"subscribe"}` to follow changes, or
+`{"op":"set","fields":{"status_text":"[x]"}}` to change it, which is what
+`hive zellij set-status` does.
+
+#### Agent hooks
+
+Set `hooks.enabled: true` and `hive run` wires each agent's own hook/notify
+mechanism to a tiny `hive-hook` executable, so the pane's `status` (and with
+it the tab name and the control plane's status column) reflects busy /
+waiting-for-permission / idle / done instead of only running / exited.
+`hive-hook` is stdlib-only, does one socket write, and always exits `0` — a
+failing hook never blocks or annoys the agent.
+
+```yaml
+hooks:
+  enabled: true # off by default
+```
+
+hive never edits your global agent settings — it injects hook config three
+different ways depending on the agent:
+
+| Agent          | Wiring                                            | Notes                                                  |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------- |
+| `claude`       | `--settings '{"hooks":{...}}'` on every launch     | Merges with `~/.claude/settings.json`; doesn't touch it |
+| `codex`        | `-c notify=["<hive-hook>","codex"]` on every launch | **Replaces** any `notify` you've set in `config.toml` while hooks are enabled — hive doesn't merge notify |
+| `gemini`       | Merged into the profile's `.gemini/settings.json`  | Only for a **named** `--profile`; your real `~/.gemini/settings.json` is never touched |
+| `copilot`      | Not wired                                          | Copilot's hooks live in the repo's `.github/hooks`, outside hive's reach |
+| `agent`/`cursor-agent` | Not wired                                  | `CURSOR_CONFIG_DIR` doesn't relocate `hooks.json`      |
+
+For Claude and Codex ("cli" mode), hooks apply to every launch of that agent.
+For Gemini ("profile" mode), they only apply when you pass `-p`/`--profile`
+with a named profile (`hive run -p work`) — running with the default profile
+never touches your real Gemini config. Each agent's wiring mode is
+configurable per-agent under `agents.configs.<name>.hooks.mode`
+(`cli` | `profile` | `unsupported`).
+
 ### `hive zellij`
 
 Open Zellij with an AI agent layout.
@@ -86,18 +132,158 @@ HIVE_AGENT=gemini hive zellij             # Use Gemini via env var
 - `--restart`: Auto-restart Zellij after it exits
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 
+#### Session layout
+
+The default `zellij.layout: "agent"` renders one agent pane running
+`hive run --restart`, plus a `hive status --watch` board controlled by
+`zellij.control_plane`: `tab` (the default) gives it its own dedicated first
+tab (full, uncompacted), created right away alongside the agents tab, which
+starts at tab 2 and is the one focused on attach; `right` nests a `--compact`
+pane under the agent pane's own column instead (that pane on top, the control
+plane at the bottom); `bottom` gives it a full-width `--compact` row under
+the agent pane; `none` omits it entirely. `tab` renders **two tabs** total;
+every other value renders one. It re-renders on every `hive zellij` start —
+there's no static file to edit. More agents are added on demand (see below).
+Further agent tabs and tool tabs are opened
+on demand (see `layout/tabs.py:BUNDLED` for the bundled tool tabs — `teams`,
+`shell`, `workflow`, `git`, `tests`, `nvim`); add your own or override a
+bundled one with `tabs:` in config (see below).
+
+The old 16-pane hand-maintained session is still available:
+
+```yaml
+zellij:
+  layout: "agent-16"
+```
+
+#### Agent-pane layout: grows with the pane count
+
+A fresh agents tab always starts with exactly one agent pane. `Alt n` (or
+`hive pane new`, or the control plane's `n`) adds another to the *current*
+tab, however many it already has. It never opens a new tab on its own. To get
+a new tab, use `Alt Shift n` (or `hive tab agents`), which opens a one-pane
+agents tab.
+
+The tab reshapes itself by pane count:
+
+| Agent panes | Layout                                                             |
+| ----------- | ------------------------------------------------------------------ |
+| 1           | Full screen                                                        |
+| 2           | Side by side (`split`)                                             |
+| 3           | Grid: two side by side on top, one full-width below (`grid`)       |
+| 4 or more   | The same grid, with the bottom slot turned into a stack (`grid-stacked`) |
+
+The top two panes stay put as agents 4, 5, … join the stack in the bottom
+slot. Closing a pane walks the same steps back: `grid-stacked`, then `grid`,
+then `split`, then full screen.
+
+This applies to `control_plane: "tab"` (the default) and `"none"`. With
+`"right"` or `"bottom"` the layout is not count-driven. Under the tmux
+backend every new pane still splits into the current tab, but tmux gets no
+grid or stack: each pane past the second splits narrower.
+
+To pick a different shape by hand, press `Alt [` / `Alt ]` (see below).
+
+#### Hotkeys
+
+The rendered `"agent"` session ships five hotkeys — the user's own Zellij
+config is never touched. All but one work without a `clear-defaults` and
+without overriding any of the user's own bindings; `new_agent_pane` is the
+deliberate exception: it replaces Zellij's own default `Alt n` ("new pane")
+binding for the life of the session, so the muscle-memory "new pane" key
+opens a hive-managed agent pane instead of a blank shell.
+
+| Default key   | Action                       | Runs                                |
+| ------------- | ----------------------------- | ------------------------------------- |
+| `Alt n`       | New agent pane                 | `hive pane new`                       |
+| `Alt Shift n` | New agents tab                 | `hive tab agents`                     |
+| `Alt Shift s` | Floating shell here             | `hive wt exec --here -- $SHELL`       |
+| `Alt m`       | Toggle control plane            | `hive status --toggle`                |
+| `Alt Shift w` | Floating shell, pick a worktree | `hive wt exec --worktree - -- $SHELL` |
+
+Change or disable them under `zellij.keybinds` in config (see
+[`zellij.keybinds`](#zellijkeybinds) below) — set a key to `null` to disable
+just that one binding, or `enabled: false` to disable all five.
+
+#### Cycling a tab's layout
+
+`Alt [` and `Alt ]` step through the layouts that fit the current tab. hive
+supplies `split`, `grid`, `grid-stacked` and `stacked` (the whole tab as one
+stack) for the `"agent"` session, and every tab opened in it inherits them.
+These are Zellij's own previous/next swap-layout keys, so hive adds no
+binding. If your own config uses `clear-defaults`, bind them yourself:
+`bind "Alt [" { PreviousSwapLayout; }` and `bind "Alt ]" { NextSwapLayout; }`.
+
+Each layout only fits certain pane counts, so there is usually nothing to
+cycle to. `split` fits exactly 2 panes, `grid` exactly 3, and `grid-stacked`
+and `stacked` fit 4 or more. With 4 or more panes, `Alt ]` toggles between
+the two.
+
+With `zellij.control_plane: "right"` or `"bottom"` cycling is off. The
+status pane has a fixed size, and the layouts would flatten it.
+
+Tool tabs (bundled and user-defined) and agent panes also open on demand
+outside the hotkeys, via `hive tab`/`hive pane` — see below.
+
 #### `hive zellij layout-path`
 
 Print the resolved path (or name) for a Zellij layout — useful for running
-`zellij --layout <path>` by hand, since the bundled `agent` layout doesn't
-exist as a file under `~/.config/zellij/layouts/` (it ships inside the
-package).
+`zellij --layout <path>` by hand. `agent` renders and writes its session
+file on every call (there's nothing to look at until you do); `agent-16`
+and other bundled/path/passthrough values are static, as before.
 
 ```bash
-hive zellij layout-path              # resolve the configured layout
-hive zellij layout-path agent        # resolve the bundled "agent" layout
+hive zellij layout-path              # render+resolve the configured layout
+hive zellij layout-path agent        # render+resolve the "agent" layout
+hive zellij layout-path agent-16     # the old 16-pane session file
 zellij --layout (hive zellij layout-path)   # fish
 ```
+
+### `hive session` and the tmux backend
+
+`hive session` is the backend-neutral counterpart to `hive zellij`: it picks
+Zellij or tmux the same way `get_mux()` does everywhere else — `mux.backend`
+in config, `HIVE_MUX_BACKEND`, or the multiplexer the process is already
+inside — falling back to Zellij when none of those apply and nothing is
+running yet (the same "starting fresh" experience `hive zellij` has always
+had, since `mux.backend: auto` alone can't tell you which multiplexer to
+*start*).
+
+```bash
+hive session                          # Auto-detect agent and backend
+HIVE_MUX_BACKEND=tmux hive session    # Force the tmux backend
+```
+
+```yaml
+mux:
+  backend: tmux # auto (default) | zellij | tmux
+```
+
+Enabling tmux gets you the same workflow as Zellij — agent panes, on-demand
+tabs/panes, a floating shell, the control-plane toggle, live control-plane
+updates — on a private tmux server (`tmux -L hive`) that never touches your
+own `~/.tmux.conf`. Differences worth knowing:
+
+| Need | Zellij | tmux |
+|---|---|---|
+| Create window/pane in a dir with a command | `new-tab -c`, `new-pane --cwd` | `new-window -c -n`, `split-window -h -c` |
+| Floating shell / control-plane toggle | floating panes (persistent, movable) | `display-popup` (**modal** — closes when the command inside it exits) |
+| Discover panes/tabs | `list-panes --json` (polled every 3s) | `list-panes`, re-run on each debounced control-mode layout event |
+| Push events | none from the CLI (plugin only) | **control mode** (`tmux -C attach-session`) streams window-add/close/rename/layout-change |
+| Own-pane identity | `$ZELLIJ_PANE_ID`, `$ZELLIJ_SESSION_NAME` | `$TMUX_PANE`, `tmux display -p '#S'` |
+| Start-suspended pane | native | emulated: `hive pane hold -- CMD` waits for Enter, then execs |
+
+Only `zellij.layout: "agent"` is supported under tmux (`agent-16` is a
+static Zellij layout file with no tmux equivalent). The Teams tab runs
+`claude --teammate-mode tmux` directly instead of wrapping it in a suspended
+`hold` pane. `hive zellij` itself — including `set-status`/`set-title` and
+`layout-path` — stays Zellij-only; under tmux, `hive pane set-status`/
+`set-title` are no-ops (agent status still updates via hooks regardless of
+backend — only the direct CLI/keybind-driven title helpers are Zellij-only).
+A `run-shell` keybind (`Alt n`, etc.) inherits tmux's session but not
+`$TMUX_PANE`, so on-demand panes/tabs split relative to whichever pane is
+currently focused, not literally "the pane the key was pressed in."
+Layout cycling (`Alt [`/`Alt ]`) is Zellij-only; tmux has its own `prefix Space`.
 
 ### `hive wt`
 
@@ -118,12 +304,15 @@ hive wt ensure NUM       # Interactive agent workflow
 
 ### `hive wt exec`
 
-Execute arbitrary commands in worktrees with optional restart loop.
+Execute arbitrary commands in worktrees with optional restart loop — also
+the CLI surface behind the `Alt Shift w` hotkey (`hive wt exec --worktree -
+-- $SHELL`, see [Hotkeys](#hotkeys)): pick a worktree, land in a shell there.
 
 ```bash
 hive wt exec -c 'ls -la'                    # Run in git root
 hive wt exec -c 'npm test' -w=-             # Interactive worktree selection
 hive wt exec -c 'npm test' -w feature-123   # Specific worktree
+hive wt exec --here -- npm test             # Run in the current pane's worktree
 hive wt exec -c 'make watch' --restart      # Auto-restart (re-select each time)
 hive wt exec -c 'make watch' --restart -w=feat  # Restart in specific worktree
 hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
@@ -131,8 +320,10 @@ hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
 
 **Options:**
 
-- `-c, --command TEXT`: Command to execute (shell string) [required]
-- `-w, --worktree TEXT`: Run in worktree. Use `-` for interactive selection, or specify branch name
+- `-c, --command TEXT`: Command to execute (shell string)
+- Trailing positional args (after `--`): alternative to `-c` — the argv to run directly, no shell
+- `-w, --worktree TEXT`: Run in worktree. Use `-` for interactive selection, `here` for the worktree of the current directory, or specify branch name
+- `--here`: Same as `-w here` — run in the worktree of the current directory. Outside any worktree, warns and falls back to the interactive picker
 - `--restart`: Auto-restart after exit. Implies `-w=-` for interactive worktree selection
 - `--restart-delay FLOAT`: Delay in seconds between restarts (default: 0)
 
@@ -141,6 +332,131 @@ hive wt exec -c 'date' --restart --restart-delay 1  # Restart with delay
 - `--restart` (no `-w`): Interactive worktree selection on EACH restart
 - `--restart -w feature-123`: Stay in that worktree, no re-selection between restarts
 - `--restart -w=-`: Explicit interactive selection on EACH restart
+
+### `hive pane`
+
+Create and manage agent panes — the CLI surface behind the `Alt n` hotkey
+and `hive pane shell` behind `Alt Shift s` (see [Hotkeys](#hotkeys)).
+
+```bash
+hive pane new                       # split an agent pane into this tab
+hive pane new -a codex -w feat      # ...running codex on branch 'feat'
+hive pane new --tab-id t2           # into a specific tab instead of the current one
+hive pane new --no-focus            # create it without switching focus
+hive pane shell --here              # split shell, cwd in this pane's worktree
+hive pane shell -w feat --floating  # floating popup shell in the 'feat' worktree
+hive pane list                      # panes in this session + their hive state
+hive pane list --json               # same, as JSON
+hive pane focus 3                   # focus pane 3
+hive pane close 3                   # close pane 3
+hive pane restart 3                 # restart the agent running in pane 3
+```
+
+`new` always splits into the target tab, however many agent panes it already
+has. A fresh one-pane agents tab opens instead when there is no target tab, or
+the target tab has no agent pane (the control tab, a shell tab) — prints the new pane's id. The tab reshapes itself by pane count (see
+[Agent-pane layout](#agent-pane-layout-grows-with-the-pane-count)).
+`hold -- CMD…` (used by the tmux backend for start-suspended panes) waits for
+Enter before running `CMD`. `set-status`/`set-title` are the same
+as `hive zellij set-status`/`set-title`, kept under both names.
+
+### `hive tab`
+
+Open tool tabs and agent tabs on demand — the CLI surface behind the
+`Alt Shift n` hotkey.
+
+```bash
+hive tab git              # open the bundled git tab
+hive tab agents           # same as Alt Shift n
+hive tab mytab            # open a user-defined tab from tabs: config
+hive tab agents --no-focus  # open it without switching focus
+hive tab list             # list every openable tab name (bundled + user + agents)
+```
+
+Neither `hive pane` nor `hive tab` blocks: they only ask the multiplexer to
+create the pane/tab and exit — the same `close_on_exit true` shape as the
+hotkeys' own `Run` blocks.
+
+### Control plane: `hive status`
+
+On a TTY inside a multiplexer, `hive status` is the session control plane —
+a Textual app with one row per pane in the session (not just started
+agents: a not-yet-started agent slot shows as `idle`, a plain tool pane
+like `shell`/`lazygit` shows its layout name with blank agent/git/task
+columns; the control plane's own pane never gets a row), pushed live over
+the pane sockets, a cheap list-panes/list-tabs poll for pane/tab discovery,
+and keys to focus/create/close/restart panes and open tabs. The leading
+`pane` column is the row's identity (label or layout name); `agent` is the
+CLI type (`claude`, `codex`, ...) and is blank for non-agent panes. It is the one
+place `hive` now fetches on a timer unprompted: every 30s it runs
+`git fetch origin` (only when the pane's `FETCH_HEAD` is stale) plus
+`git status`/`log` for every worktree, to refresh the git-status column —
+look for it in `HIVE_TRACE=1` output if you're auditing spawns. It also
+serves a control socket (`control.sock` in the session's runtime dir) that
+pickers use to read the same git facts instead of fetching their own (so
+the picker's periodic fetch is skipped whenever a control plane is up),
+and that `hive status --toggle` (the `Alt m` hotkey) uses to find and
+focus a running instance instead of starting a second one.
+
+```bash
+hive status                # the control plane (TTY + multiplexer); falls
+                            # back to the one-shot table otherwise
+hive status --toggle       # Alt+m's target: focus the running control
+                            # plane, or start one (this pane becomes it)
+hive status --plain        # one-shot Rich table, for scripts/pipes
+hive status --plain -c     # ...single-line-per-agent
+hive status -i             # one-shot interactive picker, outputs a path
+```
+
+| Key      | Action                                          |
+| -------- | ------------------------------------------------ |
+| `Enter`  | Focus the selected pane                          |
+| `n`      | New agent pane, targeting the selected row's tab |
+| `t`      | New agents tab (same as `hive tab agents`)       |
+| `T`      | Open a tool tab (pick from bundled/user tabs)    |
+| `f`      | Floating shell in the selected pane's worktree   |
+| `x`      | Close the selected pane (confirms first)         |
+| `r`      | Restart the agent in the selected pane           |
+| `d`      | Git status + recent commits for the selected pane|
+| `/`      | Filter rows (branch/agent/label/pane/task substring) |
+| `g`      | Refresh git facts now                            |
+| `?`      | Help                                             |
+| `q`      | Quit                                             |
+
+The control socket speaks the same one-JSON-object-per-line protocol as a
+pane socket (see [Pane state sockets](#pane-state-sockets)); besides
+`ping`/`get`, it answers `facts` (the same git summaries the TUI shows) and
+`call` (dispatches any operation `hive`'s control plane registers, by name):
+
+```bash
+printf '{"op":"facts"}\n' | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
+printf '{"op":"call","name":"session.open_tab","args":{"name":"git"}}\n' \
+  | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
+```
+
+`hive merge-preview` and `hive task` still use the older live-board pattern
+(`--watch`, `--interval SECONDS`; alternate screen, repainted only on
+change, `q` quits, `r` refreshes now) — that model predates the control
+plane and stays for these two single-purpose views:
+
+```bash
+hive merge-preview --watch            # file overlap between agents, live
+hive merge-preview 2 -w --interval 30 # simulated merge for agent 2 every 30 s
+hive task --watch                     # every agent's task file
+```
+
+### `hive doctor`
+
+```bash
+hive doctor            # versions (hive, python, git, zellij), multiplexer, agents on PATH
+hive doctor --timing   # phase | ms | spawns: import, config, worktree list, git summaries, status
+```
+
+`--timing` runs each startup phase in-process and counts the commands it
+spawned; the import row is measured in a fresh interpreter with
+`python -X importtime`. For a full trace of any command (phase marks such as
+`picker_first_paint`, every spawned command with its duration, refiner
+timings) run it with `HIVE_TRACE=1`; the lines go to stderr.
 
 ### `hive completion`
 
@@ -199,7 +515,8 @@ agents:
 
     codex:
       resume_args: ["resume", "--last"]
-      skip_permissions_args: ["--full-auto"]
+      skip_permissions_args: []
+      extra_args: ["--approve-for-me"]
       extra_dirs_flag: "--add-dir"
 
     gemini:
@@ -241,6 +558,10 @@ worktrees:
 
   # Default --skip-permissions flag for worktree sessions
   skip_permissions: false
+
+  # Seconds between `git fetch origin` runs started by the worktree picker.
+  # Throttled on .git/FETCH_HEAD's age, so 16 pickers share one fetch.
+  fetch_interval: 300
 
   # Files to symlink from main repo into each new worktree (relative paths)
   symlink_files:
@@ -287,6 +608,32 @@ zellij:
   # Supports placeholders: {repo} = repository name, {agent} = agent name
   session_name: "{repo}"
 
+  # Labels for agent panes c1..c16, in the bundled layout's order. A
+  # `hive run` started on demand (outside the layout) takes the first free
+  # pane number and its label from this list.
+  # pane_labels: [Anton, Bohdan, Chris, Dmytro, Emily, Frank, Grygoriy, Henry,
+  #               Ihor, Jake, Kateryna, Liam, Mykola, Noah, Orest, Petro]
+
+  # Fallback names for on-demand pane numbers beyond pane_labels (c17, c18,
+  # ...): one is picked at random, excluding any name already in use, so
+  # opening many more agents than pane_labels has entries still gets real
+  # names instead of a bare "c17". See config/default.yml for the full
+  # 70-name default (Ukrainian and American first names).
+  # pane_label_pool: [Andriy, Vasyl, ...]
+
+  # Hotkeys shipped inside the rendered session file (see Hotkeys above). Set
+  # a key to null to disable just that one binding, or enabled: false for all.
+  keybinds:
+    enabled: true
+    new_agent_pane: "Alt n"
+    new_agent_tab: "Alt Shift n"
+    floating_shell: "Alt Shift s"
+    control_plane: "Alt m"
+    worktree_shell: "Alt Shift w"
+
+  # Command the floating-shell/worktree-shell hotkeys run. null uses $SHELL.
+  floating_shell_command: null
+
 # GitHub integration
 github:
   # Fetch issues assigned to you in worktree picker
@@ -298,6 +645,10 @@ github:
 # Additional directories to pass to the agent via its extra_dirs_flag.
 # Relative paths resolve against the main repo root.
 extra_dirs: []
+
+# Agent lifecycle hooks -> pane status (see "Agent hooks" above).
+hooks:
+  enabled: false
 ```
 
 ### Configuration Options
@@ -331,7 +682,7 @@ extra_dirs: []
 |-------|-------------|----------------------|-----------------|
 | claude | `["--continue"]` | `["--dangerously-skip-permissions"]` | `--add-dir` |
 | copilot | `["--continue"]` | `["--allow-all"]` | `--add-dir` |
-| codex | `["resume", "--last"]` | `["--full-auto"]` | `--add-dir` |
+| codex | `["resume", "--last"]` | `[]` (`extra_args: ["--approve-for-me"]` is always on; codex rejects it alongside sandbox/approval flags) | `--add-dir` |
 | gemini | `["--resume", "latest"]` | `["-y"]` | `--include-directories` |
 | agent | `["resume"]` | `["-f"]` | — |
 | cursor-agent | `["resume"]` | `["-f"]` | — |
@@ -365,6 +716,17 @@ extra_dirs: []
 - **Type:** `boolean`
 - **Default:** `false`
 - **Description:** Default `--skip-permissions` flag for worktree sessions.
+
+#### `worktrees.fetch_interval`
+
+- **Type:** `float` (seconds)
+- **Default:** `300`
+- **Description:** How often the worktree picker runs `git fetch origin`.
+  The picker paints from the worktree list first and refreshes branches,
+  dirty/ahead/behind markers and GitHub issues in the background; the
+  fetch runs only when `.git/FETCH_HEAD` is older than this, so many
+  pickers starting at once (the multi-agent layout) share one fetch.
+  Env: `HIVE_WORKTREES_FETCH_INTERVAL`.
 
 #### `worktrees.auto_select`
 
@@ -401,22 +763,118 @@ Each item can be:
     if_exists: "pnpm-lock.yaml"
   ```
 
+#### `mux.backend`
+
+- **Type:** `"auto" | "zellij" | "tmux"`
+- **Default:** `"auto"` (`get_mux()` picks Zellij inside a Zellij session,
+  tmux inside a tmux session, else `None`)
+- **Description:** Which multiplexer `hive session` (and everything that
+  calls `get_mux()`) uses. See [`hive session` and the tmux
+  backend](#hive-session-and-the-tmux-backend).
+
 #### `zellij.layout`
 
 - **Type:** `string` (optional)
-- **Default:** `"agent"` (the multi-agent layout bundled with this package)
-- **Description:** Layout to use with `hive zellij`. Accepts three forms: the
-  name of a layout bundled with this package (currently just `agent`), the
-  name of a layout in Zellij's own layout dir (`~/.config/zellij/layouts/`),
-  or an explicit path / anything ending in `.kdl` (`~` is expanded). Set to
-  `null` to use Zellij's built-in default layout. Run
-  `hive zellij layout-path [name]` to see what a value resolves to.
+- **Default:** `"agent"` (renders the one-tab layout described in [Session
+  layout](#session-layout))
+- **Description:** Layout to use with `hive zellij`. Accepts: `"agent"`
+  (rendered fresh on every start), `"agent-16"` (the old hand-maintained
+  16-pane session, a static bundled file), the name of a layout in Zellij's
+  own layout dir (`~/.config/zellij/layouts/`), or an explicit path /
+  anything ending in `.kdl` (`~` is expanded). Set to `null` to use Zellij's
+  built-in default layout. Run `hive zellij layout-path [name]` to see what
+  a value resolves to.
+
+#### `zellij.control_plane`
+
+- **Type:** `string` (`"right"`, `"bottom"`, `"none"`, or `"tab"`)
+- **Default:** `"tab"`
+- **Description:** Where the `hive status --watch` board lives. `"right"`
+  nests a `--compact` pane under the agent pane's own column (that
+  pane on top, the control plane at the bottom); `"bottom"` gives it a
+  full-width `--compact` row under every agent pane instead; `"none"` omits
+  it entirely; `"tab"` gives it its own dedicated first tab (full,
+  uncompacted), created right away alongside the agents tab, which starts at
+  tab 2 and is the one focused on attach.
 
 #### `zellij.session_name`
 
 - **Type:** `string`
 - **Default:** `"{repo}"`
 - **Description:** Session name template. Supports `{repo}` (repository name) and `{agent}` (agent name) placeholders.
+
+#### `zellij.pane_labels`
+
+- **Type:** `list[string]`
+- **Default:** the sixteen names used by the `agent-16` layout's `c1: Anton` … `c16: Petro` panes
+- **Description:** Labels for agent panes, in pane-number order. Inside a
+  Zellij session, a `hive run` started outside the layout (a pane you opened
+  by hand) picks the first pane number no other `hive run` in the session
+  holds and takes its label from this list, so its title reads like the
+  layout's own panes. Env: `HIVE_ZELLIJ_PANE_LABELS` (comma-separated).
+
+#### `zellij.pane_label_pool`
+
+- **Type:** `list[string]`
+- **Default:** 70 names (Ukrainian and American), see `config/default.yml`
+- **Description:** Fallback names for on-demand pane numbers beyond
+  `pane_labels` (c17, c18, …). One is picked at random, excluding any name
+  already in use by a live or pending pane in the session, so opening many
+  more agents than `pane_labels` has entries still gets real names instead
+  of a bare `c17`; only exhausting both lists at once falls back to that.
+  Env: `HIVE_ZELLIJ_PANE_LABEL_POOL` (comma-separated).
+
+#### `zellij.keybinds`
+
+- **Type:** `object`
+- **Default:** the five bindings in [Hotkeys](#hotkeys)
+- **Description:** Hotkeys shipped inside the rendered `"agent"` session
+  file — never the user's own Zellij config, except `new_agent_pane`, which
+  deliberately replaces Zellij's own default `Alt n` binding.
+  - **`keybinds.enabled`** (`boolean`, default `true`): master switch for all
+    five bindings.
+  - **`keybinds.new_agent_pane`** (`string | null`, default `"Alt n"`):
+    `hive pane new`.
+  - **`keybinds.new_agent_tab`** (`string | null`, default `"Alt Shift n"`):
+    `hive tab agents`.
+  - **`keybinds.floating_shell`** (`string | null`, default `"Alt Shift s"`):
+    `hive wt exec --here`.
+  - **`keybinds.control_plane`** (`string | null`, default `"Alt m"`):
+    `hive status --toggle`.
+  - **`keybinds.worktree_shell`** (`string | null`, default `"Alt Shift w"`):
+    `hive wt exec --worktree -` — the interactive picker, then a shell.
+
+  A key set to `null` disables just that one binding. Zellij key syntax:
+  `"Alt a"`, `"Alt Shift s"`.
+
+#### `zellij.floating_shell_command`
+
+- **Type:** `string` (optional)
+- **Default:** `null` (uses `$SHELL`)
+- **Description:** Command the floating-shell and worktree-shell hotkeys
+  (and `hive pane shell --floating`) run. Split with `shlex` the same way
+  `tabs:` pane commands are.
+
+#### `tabs`
+
+- **Type:** `dict[string, TabConfig]`
+- **Default:** `{}`
+- **Description:** User-defined tool tabs, opened the same way as the
+  bundled ones (`teams`, `shell`, `workflow`, `git`, `tests`, `nvim`). A key
+  matching a bundled name overrides it; any other key adds a new tab.
+  ```yaml
+  tabs:
+    docs:
+      panes:
+        - name: docs
+          command: "less README.md"
+        - name: shell
+          suspended: true
+  ```
+  Each pane: `name` (required), `command` (a string, split with `shlex`, or
+  a list of argv strings; omitted/empty makes a plain shell pane), `cwd`,
+  `size` (`"30%"` or a cell count), `suspended` (start suspended, Enter to
+  launch).
 
 #### `github.fetch_issues`
 
@@ -436,6 +894,18 @@ Each item can be:
 - **Default:** `[]`
 - **Description:** Additional directories to pass to the agent via its `extra_dirs_flag`. Relative paths resolve against the main repo root.
 
+#### `hooks.enabled`
+
+- **Type:** `boolean`
+- **Default:** `false`
+- **Description:** Wire agent lifecycle hooks to the pane's status (see [Agent hooks](#agent-hooks)).
+
+#### `agents.configs.<name>.hooks.mode`
+
+- **Type:** `"cli" | "profile" | "unsupported"`
+- **Default:** `"unsupported"` (`"cli"` for claude/codex, `"profile"` for gemini, in the bundled defaults)
+- **Description:** How hive wires this agent's hook mechanism to `hive-hook` when `hooks.enabled` is true (see [Agent hooks](#agent-hooks)).
+
 ### Environment Variables
 
 Environment variables use the `HIVE_` prefix and take precedence over config files:
@@ -450,10 +920,17 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_WORKTREES_PARENT_DIR`       | string  | Directory template for worktrees               |
 | `HIVE_WORKTREES_RESUME`           | boolean | Default resume for worktree sessions           |
 | `HIVE_WORKTREES_SKIP_PERMISSIONS` | boolean | Default skip-permissions for worktree sessions |
+| `HIVE_WORKTREES_FETCH_INTERVAL`   | float   | Seconds between picker-started `git fetch origin` runs |
 | `HIVE_ZELLIJ_LAYOUT`              | string  | Zellij layout name                             |
 | `HIVE_ZELLIJ_SESSION_NAME`        | string  | Session name template                          |
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
 | `HIVE_GITHUB_ISSUE_LIMIT`         | integer | Max issues to fetch                            |
+| `HIVE_HOOKS_ENABLED`              | boolean | Wire agent lifecycle hooks to the pane's status |
+| `HIVE_MUX_BACKEND`                | `auto`\|`zellij`\|`tmux` | Multiplexer backend, overriding `mux.backend` |
+| `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
+| `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels`, falling back to `zellij.pane_label_pool`, when self-assigned |
+| `HIVE_PANE_SOCK`                  | path    | Pane-state socket served by this pane's `hive run` (exported to the agent) |
+| `HIVE_TRACE`                      | `1`     | Trace phase marks, spawned commands and refiner timings to stderr |
 
 **Legacy variables** (still supported, lower precedence than `HIVE_*`):
 

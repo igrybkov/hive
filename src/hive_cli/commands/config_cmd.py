@@ -10,7 +10,6 @@ from typing import Annotated
 
 import yaml
 from cyclopts import App, Parameter
-from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -18,12 +17,10 @@ from ..config import (
     CONFIG_FILE,
     GLOBAL_CONFIG_DIR,
     LOCAL_CONFIG_FILE,
-    get_xdg_config_home,
     load_config,
 )
-from ..utils import error, info, success
-
-console = Console()
+from ..core import paths
+from ..ui.console import error, info, out, success
 
 
 def _config_to_yaml(config) -> str:
@@ -49,17 +46,17 @@ def show_active_config() -> None:
 
     # Use rich Syntax for colored output
     syntax = Syntax(yaml_output, "yaml", theme="monokai", line_numbers=False)
-    console.print(syntax)
+    out.print(syntax)
 
 
 def show_common_paths() -> None:
     """Display common configuration paths."""
-    xdg_config = get_xdg_config_home()
+    xdg_config = paths.xdg_config_home()
     global_path = xdg_config / GLOBAL_CONFIG_DIR / "hive.yml"
 
-    console.print()
-    console.print("[bold]Common configuration paths:[/]")
-    console.print()
+    out.print()
+    out.print("[bold]Common configuration paths:[/]")
+    out.print()
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     table.add_column("Location", style="cyan")
@@ -82,13 +79,13 @@ def show_common_paths() -> None:
         "User-wide configuration",
     )
 
-    console.print(table)
-    console.print()
-    console.print("[bold]Usage:[/]")
-    console.print(f"  hive config bootstrap {CONFIG_FILE}")
-    console.print(f"  hive config bootstrap {LOCAL_CONFIG_FILE}")
-    console.print(f"  hive config bootstrap {global_path}")
-    console.print()
+    out.print(table)
+    out.print()
+    out.print("[bold]Usage:[/]")
+    out.print(f"  hive config bootstrap {CONFIG_FILE}")
+    out.print(f"  hive config bootstrap {LOCAL_CONFIG_FILE}")
+    out.print(f"  hive config bootstrap {global_path}")
+    out.print()
 
 
 def _get_default_yaml_content() -> str:
