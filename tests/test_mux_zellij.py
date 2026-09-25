@@ -275,6 +275,7 @@ class TestZellijMuxNewPane:
         return ZellijMux().new_pane(["hive", "run"], direction="auto", **kwargs)
 
     MOVE = ["zellij", "action", "move-pane", "--pane-id", "3", "down"]
+    FOCUS = ["zellij", "action", "focus-pane-id", "3"]
 
     def test_auto_pane_landing_top_right_of_a_grid_is_moved_to_the_bottom(
         self, fake_proc
@@ -291,7 +292,29 @@ class TestZellijMuxNewPane:
             self._tiled(3, 100, 1, 100, 24),
         ]
         assert self._auto_pane(fake_proc, panes, tab_id="1") == "3"
+        assert fake_proc.calls[-2:] == [self.MOVE, self.FOCUS]
+
+    def test_moved_pane_is_refocused_only_when_focus_was_requested(self, fake_proc):
+        """The swap must not leave focus on whichever pane now holds the old
+        top-right slot: a focused new pane is refocused after the move, and
+        --no-focus stays untouched."""
+        panes = [
+            self._tiled(1, 0, 1, 100, 24),
+            self._tiled(2, 0, 25, 200, 23),
+            self._tiled(3, 100, 1, 100, 24),
+        ]
+        self._auto_pane(fake_proc, panes, focus=False)
         assert fake_proc.calls[-1] == self.MOVE
+        assert fake_proc.count("zellij", "action", "focus-pane-id") == 0
+
+    def test_unmoved_auto_pane_is_not_refocused(self, fake_proc):
+        panes = [
+            self._tiled(1, 0, 1, 100, 24),
+            self._tiled(2, 100, 1, 100, 24),
+            self._tiled(3, 0, 25, 200, 23),
+        ]
+        self._auto_pane(fake_proc, panes)
+        assert fake_proc.count("zellij", "action", "focus-pane-id") == 0
 
     def test_auto_pane_already_at_the_bottom_is_left_alone(self, fake_proc):
         panes = [
@@ -337,7 +360,7 @@ class TestZellijMuxNewPane:
             self._tiled(3, 100, 1, 100, 24),
         ]
         self._auto_pane(fake_proc, noise + panes)
-        assert fake_proc.calls[-1] == self.MOVE
+        assert fake_proc.calls[-2:] == [self.MOVE, self.FOCUS]
 
     def test_explicit_direction_and_floating_panes_are_never_probed(self, fake_proc):
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_3\n")

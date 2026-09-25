@@ -243,16 +243,18 @@ class ZellijMux:
             return None
         pane_id = _pane_id(result.stdout) or None
         if pane_id and direction == "auto" and not floating:
-            self._move_newest_to_bottom(pane_id)
+            self._move_newest_to_bottom(pane_id, focus=focus)
         return pane_id
 
-    def _move_newest_to_bottom(self, pane_id: str) -> None:
+    def _move_newest_to_bottom(self, pane_id: str, *, focus: bool) -> None:
         """Swap the new pane with the one below it when Zellij's swap layout
         left it in the top row of the 2-over-1 grid (see
         `_in_top_row_of_two_over_one`). `move-pane` swaps the panes' slot
         numbers along with their geometry and leaves auto_layout on
         (verified on 0.45.1), so the order sticks through later relayouts:
-        panes 4, 5, ... stack in order under c1|c2."""
+        panes 4, 5, ... stack in order under c1|c2. A focused pane is
+        refocused afterwards so focus stays on the new pane, not on whatever
+        now sits in its old slot."""
         data = _json(_run(["zellij", "action", "list-panes", "--all", "--json"]))
         if not isinstance(data, list):
             return
@@ -271,8 +273,11 @@ class ZellijMux:
             for p in data
             if _is_tiled_terminal(p) and p.get("tab_id") == new.get("tab_id")
         ]
-        if _in_top_row_of_two_over_one(tiled, pane_id):
-            _run(["zellij", "action", "move-pane", "--pane-id", pane_id, "down"])
+        if not _in_top_row_of_two_over_one(tiled, pane_id):
+            return
+        _run(["zellij", "action", "move-pane", "--pane-id", pane_id, "down"])
+        if focus:
+            _run(["zellij", "action", "focus-pane-id", pane_id])
 
     def new_tab(self, spec: TabSpec, *, focus: bool = True) -> str | None:
         """Write render_tab_file(spec) and `new-tab --layout` it into being.
