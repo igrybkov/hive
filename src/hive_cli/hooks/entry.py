@@ -38,7 +38,18 @@ def main(argv: list[str] | None = None) -> int:
     sock = os.environ.get("HIVE_PANE_SOCK")
     if not sock:
         return 0
-    status = templates.status_for(argv[1], read_payload(argv))
+    sock_path = Path(sock)
+    payload = read_payload(argv)
+    fields: dict[str, object] = {}
+    status = templates.status_for(argv[1], payload)
     if status:
-        client.set_fields(Path(sock), status=status)
+        fields["status"] = status
+    summary = templates.summary_for(argv[1], payload)
+    if summary:
+        # First-prompt-wins: only claim the summary slot if nobody has yet.
+        current = client.get_state(sock_path)
+        if current is not None and not current.get("summary"):
+            fields["summary"] = summary
+    if fields:
+        client.set_fields(sock_path, **fields)
     return 0

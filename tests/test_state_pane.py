@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from hive_cli.state.pane_state import (
+    CLIENT_SETTABLE,
     ICONS,
     STATUSES,
     PaneState,
@@ -160,6 +161,11 @@ def test_from_dict_ignores_unknown_keys():
 def test_default_status_is_selecting_and_every_status_has_an_icon():
     assert PaneState().status == "selecting"
     assert set(STATUSES) == set(ICONS)
+
+
+def test_summary_defaults_empty_and_is_client_settable():
+    assert PaneState().summary == ""
+    assert "summary" in CLIENT_SETTABLE
 
 
 # ---------------------------------------------------------------------------

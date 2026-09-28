@@ -15,6 +15,8 @@ Stdlib only (shared with `hooks/entry.py`, which must start in well under
 
 from __future__ import annotations
 
+from ..state.pane_state import SUMMARY_MAX_LEN
+
 CLAUDE_EVENTS = {
     "SessionStart": "idle",
     "UserPromptSubmit": "busy",
@@ -55,6 +57,23 @@ def status_for(agent: str, payload: dict) -> str | None:
     if agent == "gemini":
         return GEMINI_EVENTS.get(payload.get("hook_event_name", ""))
     return None
+
+
+def summary_for(agent: str, payload: dict) -> str | None:
+    """A one-line hint of what the session is about, when this event carries
+    one; None otherwise (unknown agent/event, or no text in the payload).
+
+    Only Claude's `UserPromptSubmit` payload carries the literal prompt text
+    today; Codex only sends a turn-complete marker and Gemini's payloads
+    carry no text either, so this is `None` for both -- the control plane
+    falls back to a `hive task` assignment or task.local.md for them.
+    """
+    if agent != "claude" or payload.get("hook_event_name") != "UserPromptSubmit":
+        return None
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+    return prompt.strip().splitlines()[0][:SUMMARY_MAX_LEN]
 
 
 def claude_settings(hive_hook: str) -> dict:

@@ -89,7 +89,10 @@ mechanism to a tiny `hive-hook` executable, so the pane's `status` (and with
 it the tab name and the control plane's status column) reflects busy /
 waiting-for-permission / idle / done instead of only running / exited.
 `hive-hook` is stdlib-only, does one socket write, and always exits `0` — a
-failing hook never blocks or annoys the agent.
+failing hook never blocks or annoys the agent. For Claude, the pane's first
+prompt also becomes its `summary` (first-prompt-wins: later prompts don't
+overwrite it) — the control plane's task column shows it ahead of a `hive
+task` assignment or a task.local.md title.
 
 ```yaml
 hooks:
@@ -433,6 +436,12 @@ printf '{"op":"facts"}\n' | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
 printf '{"op":"call","name":"session.open_tab","args":{"name":"git"}}\n' \
   | nc -U "$XDG_RUNTIME_DIR/hive/<session>/control.sock"
 ```
+
+The `task` column shows the first of: the agent's own hook-reported summary
+(with `hooks.enabled: true`, Claude's first prompt in the pane — see
+[Agent hooks](#agent-hooks)), an explicit `hive task set <agent-id> "..."`
+assignment, or the title from the worktree's `.claude/task.local.md` (written
+when the worktree was created from a GitHub issue); blank when none apply.
 
 `hive merge-preview` and `hive task` still use the older live-board pattern
 (`--watch`, `--interval SECONDS`; alternate screen, repainted only on

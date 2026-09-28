@@ -116,15 +116,41 @@ def compute_facts(main_repo: Path) -> dict[str, GitSummary]:
     }
 
 
+def _issue_title(worktree_path: str) -> str | None:
+    """The title line of a worktree's `.claude/task.local.md`, if any.
+
+    That file is written from a GitHub issue when the worktree is created
+    (`services/tasks.write_task_file`); its first line is `# Task: <title>`.
+    """
+    if not worktree_path:
+        return None
+    task_file = Path(worktree_path) / ".claude" / "task.local.md"
+    if not task_file.exists():
+        return None
+    try:
+        first_line = task_file.read_text().splitlines()[0].strip()
+    except (OSError, IndexError):
+        return None
+    return first_line.removeprefix("# Task: ")[:60] or None
+
+
 def tasks_for_states(main_repo: Path, states: list[PaneState]) -> dict[str, str]:
     """Task summaries keyed by `str(hive_pane_id)`, for the control plane (F4).
 
-    A pane's task file is keyed by its worktree's agent id ("1" for main, the
-    branch name otherwise -- see `collect_status`); a pane still `selecting`
-    (no branch yet) has no worktree, so it gets no task rather than main's.
+    Precedence: the agent's own hook-reported summary (`state.summary` --
+    the session's first prompt, see `hooks/templates.summary_for`) > an
+    explicit `hive task set` assignment (keyed by the worktree's agent id,
+    "1" for main, the branch name otherwise -- see `collect_status`) > the
+    worktree's task.local.md issue title. A pane still `selecting` (no
+    branch yet) has no worktree, so it gets no task rather than main's.
     """
     return {
-        str(state.hive_pane_id): task_summary_for(main_repo, state.branch)
+        str(state.hive_pane_id): (
+            state.summary
+            or task_summary_for(main_repo, state.branch)
+            or _issue_title(state.worktree_path)
+            or ""
+        )
         for state in states
         if state.branch and state.hive_pane_id
     }

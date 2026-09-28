@@ -101,3 +101,68 @@ class TestMain:
     def test_missing_agent_arg_returns_0(self, monkeypatch):
         monkeypatch.setenv("HIVE_PANE_SOCK", "/should/not/be/used.sock")
         assert main(["hive-hook"]) == 0
+
+
+class TestMainSummary:
+    def test_first_prompt_sets_summary(self, short_tmp, monkeypatch):
+        sock = short_tmp / "p.sock"
+        server = _server(sock)
+        monkeypatch.setenv("HIVE_PANE_SOCK", str(sock))
+        monkeypatch.setattr(
+            "sys.stdin",
+            io.StringIO(
+                '{"hook_event_name":"UserPromptSubmit","prompt":"fix the login bug"}'
+            ),
+        )
+        try:
+            assert main(["hive-hook", "claude"]) == 0
+            state = client.get_state(sock)
+            assert state["summary"] == "fix the login bug"
+            assert state["status"] == "busy"
+        finally:
+            server.close()
+
+    def test_later_prompt_does_not_overwrite_summary(self, short_tmp, monkeypatch):
+        sock = short_tmp / "p.sock"
+        server = _server(sock)
+        monkeypatch.setenv("HIVE_PANE_SOCK", str(sock))
+        try:
+            monkeypatch.setattr(
+                "sys.stdin",
+                io.StringIO(
+                    '{"hook_event_name":"UserPromptSubmit","prompt":"first ask"}'
+                ),
+            )
+            main(["hive-hook", "claude"])
+            monkeypatch.setattr(
+                "sys.stdin",
+                io.StringIO(
+                    '{"hook_event_name":"UserPromptSubmit","prompt":"second ask"}'
+                ),
+            )
+            main(["hive-hook", "claude"])
+            assert client.get_state(sock)["summary"] == "first ask"
+        finally:
+            server.close()
+
+    def test_no_prompt_leaves_summary_empty(self, short_tmp, monkeypatch):
+        sock = short_tmp / "p.sock"
+        server = _server(sock)
+        monkeypatch.setenv("HIVE_PANE_SOCK", str(sock))
+        monkeypatch.setattr(
+            "sys.stdin", io.StringIO('{"hook_event_name":"UserPromptSubmit"}')
+        )
+        try:
+            assert main(["hive-hook", "claude"]) == 0
+            assert client.get_state(sock)["summary"] == ""
+        finally:
+            server.close()
+
+    def test_dead_socket_with_prompt_returns_0(self, short_tmp, monkeypatch):
+        sock = short_tmp / "gone.sock"
+        monkeypatch.setenv("HIVE_PANE_SOCK", str(sock))
+        monkeypatch.setattr(
+            "sys.stdin",
+            io.StringIO('{"hook_event_name":"UserPromptSubmit","prompt":"x"}'),
+        )
+        assert main(["hive-hook", "claude"]) == 0

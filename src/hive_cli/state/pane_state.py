@@ -16,6 +16,11 @@ from pathlib import Path
 
 SCHEMA = 1
 
+# Shared truncation length for a one-line task/summary shown in the control
+# plane's "task" column (services/status.py) and the hook-reported summary
+# below (hooks/templates.summary_for).
+SUMMARY_MAX_LEN = 60
+
 _PANE_TITLE_ID_RE = re.compile(r"^(?:hold: )?c(\d+)(?::|$)")
 _PANE_TITLE_LABEL_RE = re.compile(r"^(?:hold: )?c\d+: (.+)$")
 
@@ -53,6 +58,7 @@ CLIENT_SETTABLE = frozenset(
         "profile",
         "agent_pid",
         "tab_id",
+        "summary",
     }
 )
 
@@ -74,6 +80,11 @@ class PaneState:
     # Free-form text from `hive zellij set-status` (kept for compatibility).
     status_text: str = ""
     custom_title: str = ""
+    # First-prompt-wins hint of what this session is about, reported by
+    # hive-hook from the agent's own first prompt (hooks/templates.summary_for);
+    # "" until a hook reports one. services/status.py falls back to a
+    # `hive task` assignment or the worktree's task.local.md when empty.
+    summary: str = ""
     agent_pid: int = 0
     hive_pid: int = 0
     version: int = 0

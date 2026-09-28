@@ -15,7 +15,9 @@ from hive_cli.hooks.templates import (
     codex_notify,
     gemini_settings,
     status_for,
+    summary_for,
 )
+from hive_cli.state.pane_state import SUMMARY_MAX_LEN
 
 # ---------------------------------------------------------------------------
 # status_for
@@ -73,6 +75,47 @@ def test_empty_payload_is_none():
     assert status_for("claude", {}) is None
     assert status_for("codex", {}) is None
     assert status_for("gemini", {}) is None
+
+
+# ---------------------------------------------------------------------------
+# summary_for
+# ---------------------------------------------------------------------------
+
+
+def test_summary_for_claude_user_prompt_submit():
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": "fix the login bug"}
+    assert summary_for("claude", payload) == "fix the login bug"
+
+
+def test_summary_for_takes_first_line_only():
+    payload = {
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "first line\nsecond line",
+    }
+    assert summary_for("claude", payload) == "first line"
+
+
+def test_summary_for_truncates_long_prompts():
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": "z" * 80}
+    assert summary_for("claude", payload) == "z" * SUMMARY_MAX_LEN
+
+
+def test_summary_for_none_when_prompt_missing():
+    assert summary_for("claude", {"hook_event_name": "UserPromptSubmit"}) is None
+
+
+def test_summary_for_none_when_prompt_blank():
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": "   "}
+    assert summary_for("claude", payload) is None
+
+
+def test_summary_for_none_on_other_claude_events():
+    assert summary_for("claude", {"hook_event_name": "Stop", "prompt": "x"}) is None
+
+
+def test_summary_for_none_for_codex_and_gemini():
+    assert summary_for("codex", {"type": "agent-turn-complete"}) is None
+    assert summary_for("gemini", {"hook_event_name": "BeforeAgent"}) is None
 
 
 # ---------------------------------------------------------------------------

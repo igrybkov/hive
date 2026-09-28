@@ -8,6 +8,7 @@ from pathlib import Path
 
 from hive_cli.services.status import (
     _get_task,
+    _issue_title,
     collect_status,
     compute_facts,
     get_shared_notes_summary,
@@ -156,6 +157,28 @@ class TestComputeFacts:
         assert fake_proc.count("git", "fetch") == 0
 
 
+class TestIssueTitle:
+    def test_no_worktree_path_is_none(self):
+        assert _issue_title("") is None
+
+    def test_missing_file_is_none(self, tmp_path: Path):
+        assert _issue_title(str(tmp_path)) is None
+
+    def test_reads_title_from_task_local_md(self, tmp_path: Path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "task.local.md").write_text(
+            "# Task: Fix the login bug\n\n**Issue:** [#1](url)\n"
+        )
+        assert _issue_title(str(tmp_path)) == "Fix the login bug"
+
+    def test_truncates_to_sixty(self, tmp_path: Path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "task.local.md").write_text(f"# Task: {'z' * 100}\n")
+        assert _issue_title(str(tmp_path)) == ("z" * 100)[:60]
+
+
 class TestTasksForStates:
     def test_skips_selecting_and_unknown_pane_id(self, temp_git_repo: Path):
         tasks_dir = temp_git_repo / ".claude" / "local-agents" / "tasks"
@@ -170,3 +193,29 @@ class TestTasksForStates:
         tasks = tasks_for_states(temp_git_repo, states)
 
         assert tasks == {"1": "do the thing"}
+
+    def test_hook_summary_wins_over_hive_task_assignment(self, temp_git_repo: Path):
+        tasks_dir = temp_git_repo / ".claude" / "local-agents" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (tasks_dir / "agent-feat.md").write_text("do the thing\n")
+        states = [
+            PaneState(hive_pane_id=1, branch="feat", summary="fix the login bug"),
+        ]
+
+        assert tasks_for_states(temp_git_repo, states) == {"1": "fix the login bug"}
+
+    def test_falls_back_to_issue_title_when_no_summary_or_assignment(
+        self, temp_git_repo: Path, tmp_path: Path
+    ):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "task.local.md").write_text("# Task: Fix the login bug\n")
+        states = [
+            PaneState(hive_pane_id=1, branch="feat", worktree_path=str(tmp_path)),
+        ]
+
+        assert tasks_for_states(temp_git_repo, states) == {"1": "Fix the login bug"}
+
+    def test_empty_string_when_nothing_available(self, temp_git_repo: Path):
+        states = [PaneState(hive_pane_id=1, branch="feat")]
+        assert tasks_for_states(temp_git_repo, states) == {"1": ""}
