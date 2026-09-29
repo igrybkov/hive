@@ -64,6 +64,7 @@ hive_cli/
   services/ worktrees.py provision/remove (git + files + post_create + handoff symlink)
             pane.py      run_loop(pick, launch, restart): state server + agent child lifecycle
             restart.py   RestartFloor: backoff after fast exits (shared by run/zellij --restart)
+            launch_env.py refresh(): per-launch env from a fresh login shell + direnv/.env (pane.child_env)
             session.py   start(), open_tab(), new_agent_pane(), floating_shell(), toggle_control_plane(), restart_pane(), resolve_here()
             status.py    collect_status() (1 + 2N spawns via git_summary), AgentStatus, shared-notes summary; compute_facts()/tasks_for_states() feed the control plane
             facts.py     git facts refresher: fetch_if_stale, summaries, issues; ControlServer (control socket) + summaries_via_control()

@@ -123,6 +123,18 @@ resume:
 hooks:
   enabled: false
 
+# Env re-read before every agent launch, so a restarted agent picks up values
+# that changed after the session started (expired tokens, shell config edits).
+env:
+  # Apply what a fresh login shell exports. Off by default: ~0.3 s per launch.
+  refresh_from_shell: false
+  # argv printing NUL-separated KEY=VALUE pairs; [] = [$SHELL, -l, -c, "env -0"]
+  shell_command: []
+  # auto: `direnv export json` when direnv is installed and an .envrc exists,
+  # else the launch directory's .env. Also: direnv, dotenv, off.
+  project: auto
+  timeout: 5
+
 worktrees:
   enabled: true
   parent_dir: "~/.worktrees/{repo}/{branch}"

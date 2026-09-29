@@ -45,7 +45,7 @@ from ..state.pane_state import (
     title_for,
 )
 from ..state.server import PaneStateServer
-from . import restart
+from . import launch_env, restart
 from .restart import Pick, RestartFloor
 
 CommandRunner = Callable[[list[str]], int]
@@ -223,9 +223,24 @@ def run_agent(
     return code
 
 
+def child_env(agent_name: str | None = None) -> dict[str, str]:
+    """The env for a launch in the cwd: fresh sources, runtime state, profile.
+
+    Precedence, lowest first: inherited, refreshed (shell, direnv/.env; see
+    launch_env), hive's runtime vars, the agent profile's env -- so a stray
+    .env can't break profile credential isolation.
+    """
+    rt = get_runtime_settings()
+    fresh = launch_env.refresh(os.environ, cwd=os.getcwd(), config=get_settings().env)
+    env = rt.build_child_env(fresh)
+    if agent_name:
+        env.update(resolve_profile_env(agent_name, rt.agent_profile))
+    return env
+
+
 def default_run_command(command: list[str], ctx: PaneContext | None = None) -> int:
     """Default command runner: run and wait, inheriting the tty."""
-    return run_agent(command, get_runtime_settings().build_child_env(), ctx)
+    return run_agent(command, child_env(), ctx)
 
 
 def run_with_resume(
@@ -241,6 +256,9 @@ def run_with_resume(
     ctx: PaneContext | None = None,
 ) -> int:
     """Try resume_args first when enabled/configured, else run the base command."""
+    # Refreshed once per launch: the fallback after a failed resume reuses it.
+    # Profile env vars (config-dir redirect + creds) are part of it.
+    env = child_env(current_agent_name)
     if resume and current_agent_config and current_agent_config.resume_args:
         resume_cmd = [
             current_cmd[0],
@@ -251,14 +269,7 @@ def run_with_resume(
             *hook_args,
             *args,
         ]
-        child_env = get_runtime_settings().build_child_env()
-        child_env.update(
-            resolve_profile_env(
-                current_agent_name,
-                get_runtime_settings().agent_profile,
-            )
-        )
-        if run_agent(resume_cmd, child_env, ctx, stderr=subprocess.DEVNULL) == 0:
+        if run_agent(resume_cmd, env, ctx, stderr=subprocess.DEVNULL) == 0:
             return 0
         # Resume failed, fall back to base command
 
@@ -269,15 +280,7 @@ def run_with_resume(
     else:
         final_cmd = current_cmd
 
-    # Run the agent; inject profile env vars (config-dir redirect + creds)
-    child_env = get_runtime_settings().build_child_env()
-    child_env.update(
-        resolve_profile_env(
-            current_agent_name,
-            get_runtime_settings().agent_profile,
-        )
-    )
-    return run_agent(final_cmd, child_env, ctx)
+    return run_agent(final_cmd, env, ctx)
 
 
 def apply_workdir_override(primary_path: Path) -> None:
@@ -412,7 +415,7 @@ def _single_run(
             # Agent was changed - rebuild command with new agent.
             # Keep original args (everything after the command name).
             final_command = [rt.agent, *command[1:]]
-        os.execvpe(final_command[0], final_command, rt.build_child_env())
+        os.execvpe(final_command[0], final_command, child_env())
         # execvp doesn't return, but for type checker:
         return 0
     # Use subprocess/custom runner.

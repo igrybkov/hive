@@ -346,7 +346,7 @@ class _FakeRT:
     workdir = None
     workdir_extras_override = None
 
-    def build_child_env(self):
+    def build_child_env(self, base=None):
         return {}
 
 
@@ -727,3 +727,91 @@ class TestRestartFloor:
         )
 
         assert slept == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# child_env: the refreshed launch env
+# ---------------------------------------------------------------------------
+
+
+class TestChildEnv:
+    @pytest.fixture(autouse=True)
+    def _dotenv_project(self, monkeypatch, tmp_path):
+        from hive_cli.config import reset_settings
+
+        monkeypatch.setenv("HIVE_ENV_PROJECT", "dotenv")
+        monkeypatch.chdir(tmp_path)
+        reset_settings()
+        yield
+        reset_settings()
+
+    def test_dotenv_overrides_inherited(self, monkeypatch, tmp_path):
+        from hive_cli.services.pane import child_env
+
+        monkeypatch.setenv("TOKEN", "old")
+        (tmp_path / ".env").write_text("TOKEN=fresh\n")
+        assert child_env()["TOKEN"] == "fresh"
+
+    def test_runtime_and_profile_beat_project_env(self, monkeypatch, tmp_path):
+        from hive_cli.services.pane import child_env
+
+        rt = get_runtime_settings()
+        monkeypatch.setattr(rt, "agent_profile", "work")
+        monkeypatch.setattr(rt, "skip_permissions", True)
+        (tmp_path / ".env").write_text(
+            "CLAUDE_CONFIG_DIR=/elsewhere\nHIVE_SKIP_PERMISSIONS=\n"
+        )
+        env = child_env("claude")
+        assert env["CLAUDE_CONFIG_DIR"].endswith("/profiles/claude/work")
+        assert env["HIVE_SKIP_PERMISSIONS"] == "True"
+
+    def test_each_launch_rereads(self, tmp_path):
+        """The restart loop calls the runner per iteration: each run sees the
+        .env as it is now."""
+        from hive_cli.services.pane import default_run_command
+
+        seen = []
+        env_file = tmp_path / ".env"
+        with patch(
+            "hive_cli.services.pane.run_agent",
+            side_effect=lambda argv, env, ctx, **kw: seen.append(env["TOKEN"]) or 0,
+        ):
+            env_file.write_text("TOKEN=one\n")
+            default_run_command(["claude"])
+            env_file.write_text("TOKEN=two\n")
+            default_run_command(["claude"])
+        assert seen == ["one", "two"]
+
+    def test_resume_fallback_reuses_one_refresh(self, monkeypatch, fake_proc, tmp_path):
+        from types import SimpleNamespace
+
+        from hive_cli.config import reset_settings
+        from hive_cli.services import launch_env
+        from hive_cli.services.pane import run_with_resume
+
+        monkeypatch.setenv("HIVE_ENV_PROJECT", "direnv")
+        reset_settings()
+        monkeypatch.setattr(launch_env.shutil, "which", lambda _n: "/usr/bin/direnv")
+        (tmp_path / ".envrc").write_text("")
+        fake_proc.script(["direnv"], stdout='{"TOKEN": "fresh"}')
+        codes = iter([1, 0])  # resume fails, the fallback runs
+        envs = []
+
+        def fake_run_agent(argv, env, ctx, **kw):
+            envs.append(env)
+            return next(codes)
+
+        with patch("hive_cli.services.pane.run_agent", side_effect=fake_run_agent):
+            run_with_resume(
+                ["claude"],
+                "claude",
+                SimpleNamespace(resume_args=["--continue"]),
+                [],
+                [],
+                [],
+                [],
+                [],
+                True,
+            )
+        assert [e["TOKEN"] for e in envs] == ["fresh", "fresh"]
+        assert fake_proc.count("direnv") == 1

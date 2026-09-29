@@ -658,6 +658,13 @@ extra_dirs: []
 # Agent lifecycle hooks -> pane status (see "Agent hooks" above).
 hooks:
   enabled: false
+
+# Env re-read before every agent launch (see "env" below).
+env:
+  refresh_from_shell: false
+  shell_command: []
+  project: auto
+  timeout: 5
 ```
 
 ### Configuration Options
@@ -909,6 +916,40 @@ Each item can be:
 - **Default:** `false`
 - **Description:** Wire agent lifecycle hooks to the pane's status (see [Agent hooks](#agent-hooks)).
 
+#### `env`
+
+A Zellij or tmux session keeps the env it started with. Every pane inherits
+that env, so an expired token or a value you changed in your shell config
+stays stale until you restart the session. The `env` settings make hive
+re-read fresh values each time it launches an agent: every `--restart`
+iteration and every new pane. A running agent keeps its env; restart the
+agent to pick up new values.
+
+Order, lowest first: the inherited env, the fresh shell, the project env,
+hive's own `HIVE_*` vars, the agent profile's env. Sources only add or
+replace values. Removing a var from your shell config doesn't unset it. A
+source that fails is skipped (`HIVE_TRACE=1` shows why).
+
+- **`env.refresh_from_shell`** (`boolean`, default `false`): run a fresh
+  login shell and apply the vars it exports. The shell starts with only
+  `HOME`, `USER`, `SHELL`, `TERM`, locale, `TMPDIR`, `XDG_*` and a basic
+  `PATH`, so stale inherited values can't mask your config. `PATH`, `TERM`,
+  `PWD`, `SHLVL` and `ZELLIJ*`/`TMUX*`/`HIVE_*`/`DIRENV_*`/`__*` keep the
+  session's values. Costs one shell start (about 0.3 s for fish) per launch.
+- **`env.shell_command`** (`list[string]`, default `[]` = `[$SHELL, "-l",
+  "-c", "env -0"]`): the command that prints NUL-separated `KEY=VALUE`
+  pairs. Use `["zsh", "-l", "-i", "-c", "env -0"]` if you export the value
+  in `.zshrc`, or fish's `status is-interactive` block.
+- **`env.project`** (`auto` | `direnv` | `dotenv` | `off`, default `auto`):
+  per-directory env for the launch directory. `direnv` runs `direnv export
+  json` when an `.envrc` exists in that directory or a parent; it evaluates
+  the `.envrc` anew each time, and a blocked `.envrc` changes nothing.
+  `dotenv` reads `.env` in the launch directory. `auto` uses direnv when it
+  is installed, else `.env` (with direnv, load `.env` with `dotenv` in your
+  `.envrc`).
+- **`env.timeout`** (`float`, default `5`): seconds allowed for the shell
+  or direnv.
+
 #### `agents.configs.<name>.hooks.mode`
 
 - **Type:** `"cli" | "profile" | "unsupported"`
@@ -935,6 +976,8 @@ Environment variables use the `HIVE_` prefix and take precedence over config fil
 | `HIVE_GITHUB_FETCH_ISSUES`        | boolean | Fetch GitHub issues                            |
 | `HIVE_GITHUB_ISSUE_LIMIT`         | integer | Max issues to fetch                            |
 | `HIVE_HOOKS_ENABLED`              | boolean | Wire agent lifecycle hooks to the pane's status |
+| `HIVE_ENV_REFRESH_FROM_SHELL`     | boolean | Apply a fresh login shell's env at each agent launch |
+| `HIVE_ENV_PROJECT`                | `auto`\|`direnv`\|`dotenv`\|`off` | Per-directory env source at each agent launch |
 | `HIVE_MUX_BACKEND`                | `auto`\|`zellij`\|`tmux` | Multiplexer backend, overriding `mux.backend` |
 | `HIVE_PANE_ID`                    | integer | Agent pane number (c1..c16); set by the layout, self-assigned by `hive run` otherwise |
 | `HIVE_PANE_LABEL`                 | string  | Pane label in the title (`c1: Anton`); from `zellij.pane_labels`, falling back to `zellij.pane_label_pool`, when self-assigned |

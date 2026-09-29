@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
@@ -147,17 +148,17 @@ class RuntimeSettings(HiveBaseSettings):
         """Get pane ID as integer (0 if not set)."""
         return int(self.pane_id) if self.pane_id else 0
 
-    def build_child_env(self) -> dict[str, str]:
+    def build_child_env(self, base: Mapping[str, str] | None = None) -> dict[str, str]:
         """Build a complete env dict for child processes.
 
         Uses model_dump(by_alias=True) to produce env-var-keyed dict
-        from the mutable fields.  Starts with os.environ, removes stale
-        mutable keys (e.g. HIVE_SKIP_PERMISSIONS=1 that was since
-        toggled off), then overlays the current runtime state.
+        from the mutable fields.  Starts with `base` (default os.environ),
+        removes stale mutable keys (e.g. HIVE_SKIP_PERMISSIONS=1 that was
+        since toggled off), then overlays the current runtime state.
         """
         raw = self.model_dump(by_alias=True, include=_MUTABLE_FIELDS)
 
-        env = dict(os.environ)
+        env = dict(os.environ if base is None else base)
         # Remove all mutable keys first (handles toggled-off booleans)
         for key in raw:
             env.pop(key, None)

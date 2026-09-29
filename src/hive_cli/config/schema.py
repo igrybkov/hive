@@ -400,6 +400,32 @@ class HooksConfig(HiveBaseSettings):
     enabled: bool = False
 
 
+class EnvConfig(HiveBaseSettings):
+    """Env vars re-read before every agent launch.
+
+    A multiplexer session keeps the env it started with, so a token that
+    expires or a value changed in the shell config stays stale in every pane.
+    These sources refresh it per launch (each restart, each new pane).
+
+    Attributes:
+        refresh_from_shell: Run a fresh login shell (with a near-empty env,
+            so inherited stale values can't shadow the config) and apply the
+            vars it exports. Costs one shell start (~0.3 s) per launch.
+        shell_command: argv that prints NUL-separated KEY=VALUE pairs.
+            Empty means ``[$SHELL, "-l", "-c", "env -0"]``.
+        project: Per-directory env: "auto" (direnv when installed, else
+            ``.env``), "direnv", "dotenv", or "off".
+        timeout: Seconds allowed for each source command.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="HIVE_ENV_")
+
+    refresh_from_shell: bool = False
+    shell_command: Annotated[list[str], Field(default_factory=list)]
+    project: Literal["auto", "direnv", "dotenv", "off"] = "auto"
+    timeout: float = 5.0
+
+
 class GitHubConfig(HiveBaseSettings):
     """Configuration for GitHub integration.
 
