@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import shutil
-import subprocess
 import sys
-import time
 from typing import Annotated
 
 from cyclopts import App, Parameter
@@ -14,10 +11,12 @@ from rich.console import Console
 
 from ..agents import detect_agent
 from ..config import KNOWN_AGENTS, get_runtime_settings, get_settings
+from ..core.paths import hive_executable
 from ..git.repo import change_to_main_repo, get_session_name
-from ..utils import error, format_yellow
-from ..utils.layouts import resolve_layout
-from ..utils.zellij import set_pane_custom_title, set_pane_status
+from ..mux import get_mux
+from ..mux.zellij.backend import set_pane_custom_title, set_pane_status
+from ..services import session
+from ..ui.console import error, format_yellow
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -69,7 +68,7 @@ def zellij(
 
     # Change to main repo
     change_to_main_repo()
-    session_name = get_session_name()
+    repo_name = get_session_name()
 
     # Detect agent
     detected = detect_agent(preferred=agent)
@@ -92,40 +91,36 @@ def zellij(
     # Get zellij config
     config = get_settings()
 
-    # Build session name from template
-    # Supports {repo} and {agent} placeholders
-    full_session_name = config.zellij.session_name.format(
-        repo=session_name,
-        agent=detected.name,
+    full_session_name = session.session_name(
+        config.zellij.session_name, repo=repo_name, agent=detected.name
     )
-
-    # Build zellij command
-    cmd = ["zellij"]
-
-    # Add layout if configured (bundled name -> packaged path, path/`.kdl` ->
-    # expanded, otherwise passed through for zellij to resolve itself)
-    resolved_layout = resolve_layout(config.zellij.layout)
-    if resolved_layout:
-        cmd.extend(["--layout", resolved_layout])
-
-    cmd.extend(["attach", "--create", full_session_name])
-
+    mux = get_mux("zellij")
+    cmd = session.attach_argv(
+        config.zellij.layout,
+        full_session_name,
+        mux=mux,
+        hive=hive_executable(),
+        settings=config,
+    )
     child_env = rt.build_child_env()
 
-    if restart:
-        # Auto-restart loop
-        try:
-            while True:
-                subprocess.run(cmd, env=child_env)
-                console.print("\n[hive] Zellij exited. Restarting... (Ctrl+C to stop)")
-                if restart_delay > 0:
-                    time.sleep(restart_delay)
-        except KeyboardInterrupt:
-            console.print("\n[hive] Stopped.")
-            sys.exit(0)
-    else:
-        # Execute zellij, replacing the current process
-        os.execvpe("zellij", cmd, child_env)
+    def on_restart() -> None:
+        console.print("\n[hive] Zellij exited. Restarting... (Ctrl+C to stop)")
+
+    def on_stop() -> None:
+        console.print("\n[hive] Stopped.")
+        sys.exit(0)
+
+    session.start(
+        cmd,
+        child_env,
+        session=full_session_name,
+        mux=mux,
+        restart=restart,
+        restart_delay=restart_delay,
+        on_restart=on_restart,
+        on_stop=on_stop,
+    )
 
 
 @zellij_app.command(name="set-status")
@@ -166,20 +161,41 @@ def layout_path(
         str | None,
         Parameter(help="Layout name to resolve. Defaults to the configured layout."),
     ] = None,
+    rendered: Annotated[
+        bool,
+        Parameter(
+            name="--rendered",
+            help="Explicit request for the rendered 'agent' session file "
+            "(the default already renders it; kept for discoverability).",
+        ),
+    ] = False,
 ):
     """Print the resolved path (or name) for a Zellij layout.
 
-    Useful for running `zellij --layout <path>` by hand, since the bundled
-    "agent" layout no longer exists as a file under
-    ~/.config/zellij/layouts/ — it ships inside the hive package.
+    Useful for running `zellij --layout <path>` by hand. The bundled
+    "agent" layout renders on every call (session.kdl under
+    `hive doctor`'s state dir); "agent-16" and other bundled/path/passthrough
+    values are static, as before.
 
     Examples:
         hive zellij layout-path              # resolve the configured layout
-        hive zellij layout-path agent        # resolve the bundled "agent" layout
+        hive zellij layout-path agent        # render+resolve the "agent" layout
+        hive zellij layout-path agent-16     # the old 16-pane session file
         zellij --layout (hive zellij layout-path)
     """
-    value = name if name is not None else get_settings().zellij.layout
-    resolved = resolve_layout(value)
+    del rendered  # documented no-op: resolution below already renders "agent"
+    config = get_settings()
+    value = name if name is not None else config.zellij.layout
+    change_to_main_repo()
+    detected = detect_agent()
+    full_session_name = session.session_name(
+        config.zellij.session_name,
+        repo=get_session_name(),
+        agent=detected.name if detected else "",
+    )
+    resolved = session.resolve_layout_path(
+        value, session=full_session_name, hive=hive_executable(), settings=config
+    )
     if resolved is None:
         stderr_console.print("[dim]No layout configured[/dim]")
         sys.exit(1)
