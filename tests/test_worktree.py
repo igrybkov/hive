@@ -8,13 +8,15 @@ from unittest.mock import patch
 from hive_cli.config import reload_config
 from hive_cli.git.worktree import (
     WorktreeInfo,
+    get_worktree_path,
+    list_worktrees,
+    worktree_exists,
+)
+from hive_cli.git.worktree_paths import (
     _path_to_name,
     expand_path,
-    get_worktree_path,
     get_worktrees_base,
-    list_worktrees,
     sanitize_branch_name,
-    worktree_exists,
 )
 
 
@@ -80,7 +82,7 @@ class TestGetWorktreesBase:
         reload_config()
 
         repo = Path.home() / "Projects" / "myrepo"
-        with patch("hive_cli.git.worktree.get_main_repo", return_value=repo):
+        with patch("hive_cli.git.worktree_paths.get_main_repo", return_value=repo):
             base = get_worktrees_base()
             assert base == Path.home() / ".worktrees" / "Projects--myrepo"
 
@@ -95,7 +97,9 @@ class TestGetWorktreesBase:
             "hive_cli.config.loader.find_config_files", return_value=[config_file]
         ):
             reload_config()
-            with patch("hive_cli.git.worktree.get_main_repo", return_value=tmp_path):
+            with patch(
+                "hive_cli.git.worktree_paths.get_main_repo", return_value=tmp_path
+            ):
                 base = get_worktrees_base()
                 assert base == tmp_path / "custom-wt"
 
@@ -111,7 +115,7 @@ class TestGetWorktreesBase:
             "hive_cli.config.loader.find_config_files", return_value=[config_file]
         ):
             reload_config()
-            with patch("hive_cli.git.worktree.get_main_repo", return_value=repo):
+            with patch("hive_cli.git.worktree_paths.get_main_repo", return_value=repo):
                 base = get_worktrees_base()
                 assert base == Path.home() / ".worktrees" / "Projects--dotfiles"
 
@@ -127,7 +131,7 @@ class TestGetWorktreesBase:
             "hive_cli.config.loader.find_config_files", return_value=[config_file]
         ):
             reload_config()
-            with patch("hive_cli.git.worktree.get_main_repo", return_value=repo):
+            with patch("hive_cli.git.worktree_paths.get_main_repo", return_value=repo):
                 base = get_worktrees_base()
                 assert base == Path.home() / ".wt" / "Projects--myrepo"
 

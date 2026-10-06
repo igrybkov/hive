@@ -129,8 +129,10 @@ class TestWtCreateCommand:
         result = cli_runner.invoke(app, ["wt", "create", "main"])
         assert result.exit_code == 1
 
-    def test_create_new_branch(self, cli_runner: CycloptsTestRunner, temp_git_repo):
-        """Test create new branch worktree."""
+    def test_create_new_branch(
+        self, cli_runner: CycloptsTestRunner, temp_git_repo, isolated_worktrees
+    ):
+        """Test create new branch worktree (isolated so no ~/.worktrees leftovers)."""
         result = cli_runner.invoke(
             app, ["wt", "create", "test-feature", "--no-install"]
         )
@@ -167,7 +169,7 @@ class TestProfilePickerIntegration:
 
     def test_action_change_profile_sentinel_defined(self):
         """ACTION_CHANGE_PROFILE sentinel is defined and distinct from others."""
-        from hive_cli.commands.wt import (
+        from hive_cli.ui.pickers.worktrees import (
             ACTION_CHANGE_AGENT,
             ACTION_CHANGE_PROFILE,
             ACTION_CHANGE_WORKDIR,
@@ -258,25 +260,25 @@ class TestProfilePickerIntegration:
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
-                "hive_cli.commands.exec_runner.get_git_root",
+                "hive_cli.ui.flows.worktrees.get_git_root",
                 return_value=tmp_path,
             ),
             patch("hive_cli.config.loader.find_config_files", return_value=[]),
             # Provide a fake select_and_change_to_worktree that picks main
             patch(
-                "hive_cli.commands.exec_runner.select_and_change_to_worktree",
+                "hive_cli.ui.flows.worktrees.select_and_change_to_worktree",
                 return_value=(True, "main"),
             ),
-            patch("hive_cli.commands.run.subprocess.run") as mock_run,
-            patch("hive_cli.commands.exec_runner.os.execvpe") as mock_execvpe,
+            patch("hive_cli.services.pane.subprocess.Popen") as mock_run,
+            patch("hive_cli.ui.flows.worktrees.os.execvpe") as mock_execvpe,
         ):
             reload_config()
-            mock_run.return_value.returncode = 0
+            mock_run.return_value.wait.return_value = 0
             # Use --worktree=- (with =) so cyclopts doesn't treat '-' as a flag
             cli_runner.invoke(
                 app, ["run", "-a", "claude", "--worktree=-", "--no-resume"]
             )
 
-        # Dynamic runner uses subprocess.run, not os.execvpe
+        # Dynamic runner spawns a child (Popen), not os.execvpe
         assert mock_run.call_count >= 1
         mock_execvpe.assert_not_called()
