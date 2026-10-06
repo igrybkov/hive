@@ -393,8 +393,19 @@ class TestZellijMuxNewPane:
         fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_8\n")
         assert ZellijMux().new_pane(["hive", "run"], tab_id="4") == "8"
         assert fake_proc.count("zellij", "action", "go-to-tab-by-id") == 0
-        cmd = fake_proc.calls[-1]
+        cmd = fake_proc.calls[-2]
         assert cmd[cmd.index("--tab-id") + 1] == "4"
+
+    def test_new_pane_with_tab_id_is_focused_explicitly(self, fake_proc):
+        """`new-pane --tab-id` leaves focus where it was, even without
+        --no-focus (verified on 0.45.1): the Alt+n pane never got focus."""
+        fake_proc.script(["zellij", "action", "new-pane"], stdout="terminal_8\n")
+        ZellijMux().new_pane(["hive", "run"], tab_id="4")
+        assert fake_proc.calls[-1] == ["zellij", "action", "focus-pane-id", "8"]
+        ZellijMux().new_pane(["hive", "run"], tab_id="4", focus=False)
+        assert fake_proc.count("zellij", "action", "focus-pane-id") == 1
+        ZellijMux().new_pane(["hive", "run"])
+        assert fake_proc.count("zellij", "action", "focus-pane-id") == 1
 
     def test_new_pane_no_focus_flag(self, fake_proc, monkeypatch):
         monkeypatch.setenv("ZELLIJ", "0")
