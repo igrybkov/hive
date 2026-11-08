@@ -15,22 +15,27 @@ Usage:
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 
+from ..core import paths
 from .base import HiveBaseSettings
 
 # Fields exported to child processes via build_child_env().
-_MUTABLE_FIELDS = frozenset({"agent", "agent_profile", "pane_id", "skip_permissions"})
+_MUTABLE_FIELDS = frozenset(
+    {"agent", "agent_profile", "pane_id", "pane_label", "pane_sock", "skip_permissions"}
+)
 
 
 class RuntimeSettings(HiveBaseSettings):
     """Runtime state populated from environment variables.
 
-    Mutable fields (agent, pane_id, skip_permissions) can be changed at
-    runtime and exported to child processes via build_child_env().
+    Mutable fields (agent, agent_profile, pane_id, pane_label, pane_sock,
+    skip_permissions) can be changed at runtime and exported to child
+    processes via build_child_env().
 
     Immutable context fields (in_zellij, editor, etc.) are read once
     from the parent process environment.
@@ -55,6 +60,24 @@ class RuntimeSettings(HiveBaseSettings):
         str | None,
         Field(
             None, validation_alias="HIVE_PANE_ID", serialization_alias="HIVE_PANE_ID"
+        ),
+    ]
+    pane_label: Annotated[
+        str | None,
+        Field(
+            None,
+            validation_alias="HIVE_PANE_LABEL",
+            serialization_alias="HIVE_PANE_LABEL",
+        ),
+    ]
+    # Path of the pane-state socket a `hive run` serves for this pane. Read
+    # from HIVE_PANE_SOCK, else derived from the Zellij pane identity below.
+    pane_sock: Annotated[
+        str | None,
+        Field(
+            None,
+            validation_alias="HIVE_PANE_SOCK",
+            serialization_alias="HIVE_PANE_SOCK",
         ),
     ]
     skip_permissions: Annotated[
@@ -95,7 +118,6 @@ class RuntimeSettings(HiveBaseSettings):
         str, Field("default", validation_alias="ZELLIJ_SESSION_NAME")
     ]
     zellij_pane_id: Annotated[str, Field("0", validation_alias="ZELLIJ_PANE_ID")]
-    pane_label: Annotated[str | None, Field(None, validation_alias="HIVE_PANE_LABEL")]
     editor: Annotated[str, Field("vim", validation_alias="EDITOR")]
     xdg_cache_home: Annotated[
         Path,
@@ -105,23 +127,38 @@ class RuntimeSettings(HiveBaseSettings):
         ),
     ]
 
+    @model_validator(mode="after")
+    def derive_pane_sock(self) -> RuntimeSettings:
+        """Without HIVE_PANE_SOCK, the socket path follows from the Zellij pane.
+
+        Only when both ZELLIJ_SESSION_NAME and ZELLIJ_PANE_ID are actually in
+        the environment -- their field defaults must not yield a path.
+        """
+        if self.pane_sock is None and all(
+            var in os.environ for var in ("ZELLIJ_SESSION_NAME", "ZELLIJ_PANE_ID")
+        ):
+            self.pane_sock = str(
+                paths.pane_sock(self.zellij_session_name, self.zellij_pane_id)
+            )
+        return self
+
     @computed_field
     @property
     def pane_id_int(self) -> int:
         """Get pane ID as integer (0 if not set)."""
         return int(self.pane_id) if self.pane_id else 0
 
-    def build_child_env(self) -> dict[str, str]:
+    def build_child_env(self, base: Mapping[str, str] | None = None) -> dict[str, str]:
         """Build a complete env dict for child processes.
 
         Uses model_dump(by_alias=True) to produce env-var-keyed dict
-        from the mutable fields.  Starts with os.environ, removes stale
-        mutable keys (e.g. HIVE_SKIP_PERMISSIONS=1 that was since
-        toggled off), then overlays the current runtime state.
+        from the mutable fields.  Starts with `base` (default os.environ),
+        removes stale mutable keys (e.g. HIVE_SKIP_PERMISSIONS=1 that was
+        since toggled off), then overlays the current runtime state.
         """
         raw = self.model_dump(by_alias=True, include=_MUTABLE_FIELDS)
 
-        env = dict(os.environ)
+        env = dict(os.environ if base is None else base)
         # Remove all mutable keys first (handles toggled-off booleans)
         for key in raw:
             env.pop(key, None)

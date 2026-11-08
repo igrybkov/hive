@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from ..core import paths
 
 # Config file names
 CONFIG_FILE = ".hive.yml"
@@ -19,34 +19,23 @@ GLOBAL_CONFIG_DIR = "hive"
 GLOBAL_CONFIG_FILES = ["hive.yml", "hive.yaml"]
 
 
-def find_git_root() -> Path | None:
-    """Find the git repository root.
+def find_project_root(start: Path | None = None) -> Path | None:
+    """Find the project root by walking up from ``start`` to the nearest `.git`.
+
+    No subprocess spawn: `.git` is a directory in the main repo and a *file*
+    (gitdir pointer) inside a linked worktree — either one marks the root.
+
+    Args:
+        start: Directory to start the walk from. Defaults to the cwd.
 
     Returns:
-        Path to git root, or None if not in a git repository.
+        Path to the project root, or None if no `.git` is found above start.
     """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return Path(result.stdout.strip()).resolve()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-
-
-def get_xdg_config_home() -> Path:
-    """Get the XDG config home directory.
-
-    Returns:
-        Path to XDG_CONFIG_HOME, or ~/.config if not set.
-    """
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config:
-        return Path(xdg_config)
-    return Path.home() / ".config"
+    current = (start or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
 
 
 def find_global_config() -> Path | None:
@@ -57,7 +46,7 @@ def find_global_config() -> Path | None:
     Returns:
         Path to global config file if found, None otherwise.
     """
-    config_dir = get_xdg_config_home() / GLOBAL_CONFIG_DIR
+    config_dir = paths.xdg_config_home() / GLOBAL_CONFIG_DIR
 
     for filename in GLOBAL_CONFIG_FILES:
         path = config_dir / filename
@@ -76,7 +65,7 @@ def find_config_files(git_root: Path | None = None) -> list[Path]:
     3. .hive.local.yml (git-ignored local overrides)
 
     Args:
-        git_root: Git repository root. If None, auto-detected.
+        git_root: Project root. If None, auto-detected (walk-up, no spawn).
 
     Returns:
         List of config file paths that exist.
@@ -90,7 +79,7 @@ def find_config_files(git_root: Path | None = None) -> list[Path]:
 
     # Project config files
     if git_root is None:
-        git_root = find_git_root()
+        git_root = find_project_root()
 
     if git_root is not None:
         for filename in [CONFIG_FILE, LOCAL_CONFIG_FILE]:

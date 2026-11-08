@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import os
-import subprocess
 from pathlib import Path
+
+from ..core import proc
 
 
 def get_git_root() -> Path | None:
@@ -14,43 +16,42 @@ def get_git_root() -> Path | None:
         Resolved path to git root, or None if not in a git repository.
     """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return Path(result.stdout.strip()).resolve()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        result = proc.run(["git", "rev-parse", "--show-toplevel"], timeout=10)
+    except OSError:
         return None
+    if not result.ok:
+        return None
+    return Path(result.stdout.strip()).resolve()
 
 
+@functools.lru_cache(maxsize=1)
 def get_main_repo() -> Path:
     """Get the main repository path (not worktree).
 
     For worktrees, this returns the path to the main repository.
     For main repositories, returns the repository path.
 
+    Cached for the life of the process: every command asks several times
+    and the answer only changes with a chdir into another repository
+    (`get_main_repo.cache_clear()` then; tests do it per test).
+
     Returns:
         Path to the main repository, or current directory if not in a git repo.
     """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        result = proc.run(["git", "rev-parse", "--git-common-dir"], timeout=10)
+    except OSError:
+        result = None
+    if result is not None and result.ok:
         git_common_dir = Path(result.stdout.strip())
         # Main repo is parent of .git directory
         return git_common_dir.resolve().parent
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        try:
-            return Path.cwd()
-        except (FileNotFoundError, OSError):
-            raise RuntimeError(
-                "Current directory no longer exists — navigate to a valid path first."
-            ) from None
+    try:
+        return Path.cwd()
+    except (FileNotFoundError, OSError):
+        raise RuntimeError(
+            "Current directory no longer exists — navigate to a valid path first."
+        ) from None
 
 
 def get_session_name() -> str:
@@ -105,13 +106,10 @@ def get_current_worktree_branch() -> str | None:
 
     # We're in a worktree - get the branch name
     try:
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        branch = result.stdout.strip()
-        return branch if branch else None
-    except subprocess.CalledProcessError:
+        result = proc.run(["git", "branch", "--show-current"], timeout=10)
+    except OSError:
         return None
+    if not result.ok:
+        return None
+    branch = result.stdout.strip()
+    return branch if branch else None

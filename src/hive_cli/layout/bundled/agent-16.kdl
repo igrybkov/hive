@@ -1,0 +1,322 @@
+// Generic AI agent development layout
+// Uses $AGENT environment variable to determine which agent to run
+// Multiple agent sessions + Neovim for real-time code watching
+
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    // Main development tab - Eight agent sessions with status board.
+    // Pairs are aligned across columns: c1/c2, c3/c4, c5/c6, c7/c8.
+    tab name="1. Chats 1-8" focus=true {
+        pane split_direction="vertical" {
+            // Left: odd-numbered agents
+            pane stacked=true {
+                pane name="c1: Anton" expanded=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=1 HIVE_PANE_LABEL=Anton hive run --restart"
+                }
+                pane name="c3: Chris" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=3 HIVE_PANE_LABEL=Chris hive run --restart"
+                }
+                pane name="c5: Emily" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=5 HIVE_PANE_LABEL=Emily hive run --restart"
+                }
+                pane name="c7: Grygoriy" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=7 HIVE_PANE_LABEL=Grygoriy hive run --restart"
+                }
+            }
+            // Right: even-numbered agents + status board
+            pane split_direction="horizontal" {
+                pane size="75%" stacked=true {
+                    pane name="c2: Bohdan" expanded=true start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=2 HIVE_PANE_LABEL=Bohdan hive run --restart"
+                    }
+                    pane name="c4: Dmytro" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=4 HIVE_PANE_LABEL=Dmytro hive run --restart"
+                    }
+                    pane name="c6: Frank" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=6 HIVE_PANE_LABEL=Frank hive run --restart"
+                    }
+                    pane name="c8: Henry" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=8 HIVE_PANE_LABEL=Henry hive run --restart"
+                    }
+                }
+                pane name="status" {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec hive status --watch --compact"
+                }
+            }
+        }
+    }
+
+    // Additional agent sessions tab - Eight more agents.
+    // Pairs aligned across columns: c9/c10, c11/c12, c13/c14, c15/c16.
+    tab name="2. Chats 9-16" {
+        pane split_direction="vertical" {
+            // Left: odd-numbered agents
+            pane stacked=true {
+                pane name="c9: Ihor" expanded=true start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=9 HIVE_PANE_LABEL=Ihor hive run --restart"
+                }
+                pane name="c11: Kateryna" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=11 HIVE_PANE_LABEL=Kateryna hive run --restart"
+                }
+                pane name="c13: Mykola" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=13 HIVE_PANE_LABEL=Mykola hive run --restart"
+                }
+                pane name="c15: Orest" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=15 HIVE_PANE_LABEL=Orest hive run --restart"
+                }
+            }
+            // Right: even-numbered agents
+            pane stacked=true {
+                pane name="c10: Jake" expanded=true start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=10 HIVE_PANE_LABEL=Jake hive run --restart"
+                }
+                pane name="c12: Liam" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=12 HIVE_PANE_LABEL=Liam hive run --restart"
+                }
+                pane name="c14: Noah" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=14 HIVE_PANE_LABEL=Noah hive run --restart"
+                }
+                pane name="c16: Petro" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=16 HIVE_PANE_LABEL=Petro hive run --restart"
+                }
+            }
+        }
+    }
+
+    // Agent Teams tab - 4 tmux sessions for Claude agent teams
+    // tmux session = {zellij-session}-team-{N}-{branch} so per-branch state
+    // survives zellij restarts and re-attaches on next launch.
+    tab name="3. Teams" {
+        pane stacked=true {
+            pane name="team-1" expanded=true start_suspended=true {
+                command "hive"
+                args "wt" "exec" "--restart" "-w=-" "-c" "sh -c 'tmux new-session -A -s \"$ZELLIJ_SESSION_NAME-team-1-$(git branch --show-current | tr / -)\" \"env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux\"'"
+            }
+            pane name="team-2" start_suspended=true {
+                command "hive"
+                args "wt" "exec" "--restart" "-w=-" "-c" "sh -c 'tmux new-session -A -s \"$ZELLIJ_SESSION_NAME-team-2-$(git branch --show-current | tr / -)\" \"env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux\"'"
+            }
+            pane name="team-3" start_suspended=true {
+                command "hive"
+                args "wt" "exec" "--restart" "-w=-" "-c" "sh -c 'tmux new-session -A -s \"$ZELLIJ_SESSION_NAME-team-3-$(git branch --show-current | tr / -)\" \"env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux\"'"
+            }
+            pane name="team-4" start_suspended=true {
+                command "hive"
+                args "wt" "exec" "--restart" "-w=-" "-c" "sh -c 'tmux new-session -A -s \"$ZELLIJ_SESSION_NAME-team-4-$(git branch --show-current | tr / -)\" \"env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux\"'"
+            }
+        }
+    }
+
+    // Shell + Logs tab
+    tab name="4. Shell" {
+        pane split_direction="vertical" {
+            // Left: Shells stacked
+            pane size="50%" split_direction="horizontal" {
+                pane size="70%" name="shell" {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec fish"
+                }
+                pane name="shell-2" {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec fish"
+                }
+            }
+            // Right: Logs stacked
+            pane split_direction="horizontal" {
+                // Log watcher (Enter to start)
+                pane size="50%" name="watch-logs" start_suspended=true {
+                    command "fish"
+                    args "-c" "hive wt exec -c 'watch-logs' --restart -w=-"
+                }
+                // Lazydocker (Enter to start)
+                pane name="lazydocker" start_suspended=true {
+                    command "lazydocker"
+                }
+            }
+        }
+    }
+
+    // Multi-agent workflow tools tab
+    tab name="5. Workflow" {
+        pane split_direction="horizontal" {
+            // Top: Diff and merge preview side by side
+            pane size="60%" split_direction="vertical" {
+                pane name="diff" start_suspended=true {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && hive diff --stat && echo '' && echo 'Press Enter to see full diff...' && read && hive diff"
+                }
+                pane name="merge-preview" start_suspended=true {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec watch -n 5 -c hive merge-preview"
+                }
+            }
+            // Bottom: Rebase check and tasks
+            pane split_direction="vertical" {
+                pane name="rebase-check" start_suspended=true {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec hive rebase-check --fetch"
+                }
+                pane name="tasks" start_suspended=true {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec watch -n 5 -c hive task"
+                }
+            }
+        }
+    }
+
+    // Git operations tab
+    tab name="6. Git" {
+        pane split_direction="horizontal" {
+            // Top: lazygit (70%) — Enter to start
+            pane size="70%" name="lazygit" start_suspended=true {
+                command "fish"
+                args "-c" "cd (hive wt parent) && exec lazygit"
+            }
+            // Bottom: Git command shell (30%)
+            pane name="git-shell" {
+                command "fish"
+                args "-c" "cd (hive wt parent) && exec fish"
+            }
+        }
+    }
+
+    // Tests tab
+    tab name="7. Tests" {
+        pane name="watch-tests" start_suspended=true {
+            command "fish"
+            args "-c" "hive wt exec -c 'watch-tests' --restart --restart-confirmation -w=-"
+        }
+    }
+
+    // Neovim tab - focused editing
+    tab name="8. Neovim" {
+        pane name="neovim" {
+            command "fish"
+            args "-c" "hive wt exec -c 'nvim' --restart -w=-"
+        }
+    }
+
+    // Narrow-window variant: chats collapse into a single stack ordered
+    // c1..c8 (or c9..c16) and, for Tab 1, status pinned to the bottom.
+    //
+    // Each slot declares the matching pane's exact command + args (and
+    // start_suspended where applicable) so zellij's first-pass run
+    // matcher pins each existing pane to the slot of the same identity.
+    // Without this, panes would slot in by breadth-first enumeration of
+    // the wide layout's tree, producing the interleaved odd/even order
+    // (c1, c3, c5, c7, c2, c4, c6, c8).
+    swap_tiled_layout name="narrow" {
+        // Tab 1 "Chats 1-8": c1..c8 stacked sequentially, status pinned.
+        tab exact_panes=11 {
+            pane split_direction="horizontal" {
+                pane stacked=true {
+                    pane name="c1: Anton" {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=1 HIVE_PANE_LABEL=Anton hive run --restart"
+                    }
+                    pane name="c2: Bohdan" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=2 HIVE_PANE_LABEL=Bohdan hive run --restart"
+                    }
+                    pane name="c3: Chris" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=3 HIVE_PANE_LABEL=Chris hive run --restart"
+                    }
+                    pane name="c4: Dmytro" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=4 HIVE_PANE_LABEL=Dmytro hive run --restart"
+                    }
+                    pane name="c5: Emily" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=5 HIVE_PANE_LABEL=Emily hive run --restart"
+                    }
+                    pane name="c6: Frank" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=6 HIVE_PANE_LABEL=Frank hive run --restart"
+                    }
+                    pane name="c7: Grygoriy" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=7 HIVE_PANE_LABEL=Grygoriy hive run --restart"
+                    }
+                    pane name="c8: Henry" start_suspended=true {
+                        command "fish"
+                        args "-c" "env HIVE_PANE_ID=8 HIVE_PANE_LABEL=Henry hive run --restart"
+                    }
+                }
+                pane name="status" size="20%" {
+                    command "fish"
+                    args "-c" "cd (hive wt parent) && exec hive status --watch --compact"
+                }
+            }
+        }
+        // Tab 2 "Chats 9-16": c9..c16 stacked sequentially.
+        tab exact_panes=10 {
+            pane stacked=true {
+                pane name="c9: Ihor" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=9 HIVE_PANE_LABEL=Ihor hive run --restart"
+                }
+                pane name="c10: Jake" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=10 HIVE_PANE_LABEL=Jake hive run --restart"
+                }
+                pane name="c11: Kateryna" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=11 HIVE_PANE_LABEL=Kateryna hive run --restart"
+                }
+                pane name="c12: Liam" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=12 HIVE_PANE_LABEL=Liam hive run --restart"
+                }
+                pane name="c13: Mykola" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=13 HIVE_PANE_LABEL=Mykola hive run --restart"
+                }
+                pane name="c14: Noah" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=14 HIVE_PANE_LABEL=Noah hive run --restart"
+                }
+                pane name="c15: Orest" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=15 HIVE_PANE_LABEL=Orest hive run --restart"
+                }
+                pane name="c16: Petro" start_suspended=true {
+                    command "fish"
+                    args "-c" "env HIVE_PANE_ID=16 HIVE_PANE_LABEL=Petro hive run --restart"
+                }
+            }
+        }
+    }
+
+    swap_floating_layout {
+        floating_panes {
+            pane x="17%" y="17%" width="65%" height="65%"
+        }
+    }
+}

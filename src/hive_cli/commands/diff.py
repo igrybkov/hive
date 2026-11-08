@@ -2,87 +2,75 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App, Parameter
-from rich.console import Console
 
 from ..git import (
     get_current_branch,
     get_default_branch,
+    get_diff,
     get_main_repo,
+    has_delta,
     list_worktrees,
+    show_diff_with_delta,
 )
-
-# Console for output
-console = Console()
+from ..ui.console import out
 
 
-def _has_delta() -> bool:
-    """Check if delta pager is available."""
-    return shutil.which("delta") is not None
+def _print_worktree_header(agent_id: str, branch: str, is_main: bool) -> None:
+    """Print the "Agent N - branch" banner for a worktree's diff section.
+
+    Args:
+        agent_id: Agent identifier.
+        branch: Current branch name.
+        is_main: Whether this is the main repo.
+    """
+    out.print()
+    out.print("[cyan]" + "═" * 55 + "[/]")
+
+    if is_main:
+        out.print(f"[bold magenta]Agent 1 (main)[/] - [green]{branch}[/]")
+    else:
+        out.print(f"[bold magenta]Agent {agent_id}[/] - [green]{branch}[/]")
+
+    out.print("[cyan]" + "═" * 55 + "[/]")
 
 
-def _get_diff(
-    path: Path,
-    default_branch: str,
-    stat: bool = False,
-    files_only: bool = False,
-) -> str:
-    """Get diff for a worktree.
+def _print_diff_or_no_changes(diff_output: str) -> None:
+    """Print raw diff output, or a "(no changes)" marker if empty.
+
+    Args:
+        diff_output: Raw git diff output (never parsed as Rich markup, or
+            `list[str]` and `[text](url)` in the diff are silently swallowed).
+    """
+    if diff_output:
+        out.print(diff_output, markup=False)
+    else:
+        out.print("  [dim](no changes)[/]")
+
+
+def _print_diff_body(
+    path: Path, default_branch: str, stat: bool, files_only: bool
+) -> None:
+    """Print the diff for a worktree, choosing delta/plain/stat rendering.
 
     Args:
         path: Path to worktree.
         default_branch: Default branch to diff against.
         stat: If True, show diffstat.
-        files_only: If True, show only changed file names.
-
-    Returns:
-        Diff output string.
+        files_only: If True, show only file names.
     """
-    cmd = ["git", "-C", str(path), "diff"]
-
-    if files_only:
-        cmd.append("--name-only")
-    elif stat:
-        cmd.append("--stat")
-
-    cmd.append(default_branch)
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return result.stdout
-    except subprocess.CalledProcessError:
-        return ""
-
-
-def _show_diff_with_delta(path: Path, default_branch: str) -> bool:
-    """Show diff using delta pager.
-
-    Args:
-        path: Path to worktree.
-        default_branch: Default branch to diff against.
-
-    Returns:
-        True if diff was shown.
-    """
-    try:
-        git_proc = subprocess.Popen(
-            ["git", "-C", str(path), "diff", default_branch],
-            stdout=subprocess.PIPE,
+    if files_only or stat:
+        _print_diff_or_no_changes(
+            get_diff(path, default_branch, stat=stat, files_only=files_only)
         )
-        delta_proc = subprocess.Popen(
-            ["delta"],
-            stdin=git_proc.stdout,
-        )
-        git_proc.stdout.close()
-        delta_proc.communicate()
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    elif has_delta():
+        if not show_diff_with_delta(path, default_branch):
+            out.print("  [dim](no changes)[/]")
+    else:
+        _print_diff_or_no_changes(get_diff(path, default_branch))
 
 
 def _show_worktree_diff(
@@ -104,34 +92,8 @@ def _show_worktree_diff(
         files_only: If True, show only file names.
     """
     branch = get_current_branch(path) or "detached"
-
-    console.print()
-    console.print("[cyan]" + "═" * 55 + "[/]")
-
-    if is_main:
-        console.print(f"[bold magenta]Agent 1 (main)[/] - [green]{branch}[/]")
-    else:
-        console.print(f"[bold magenta]Agent {agent_id}[/] - [green]{branch}[/]")
-
-    console.print("[cyan]" + "═" * 55 + "[/]")
-
-    if files_only or stat:
-        diff_output = _get_diff(path, default_branch, stat=stat, files_only=files_only)
-        if diff_output:
-            console.print(diff_output)
-        else:
-            console.print("  [dim](no changes)[/]")
-    else:
-        # Use delta if available
-        if _has_delta():
-            if not _show_diff_with_delta(path, default_branch):
-                console.print("  [dim](no changes)[/]")
-        else:
-            diff_output = _get_diff(path, default_branch)
-            if diff_output:
-                console.print(diff_output)
-            else:
-                console.print("  [dim](no changes)[/]")
+    _print_worktree_header(agent_id, branch, is_main)
+    _print_diff_body(path, default_branch, stat, files_only)
 
 
 def show_diff(stat: bool = False, files_only: bool = False) -> None:
@@ -144,14 +106,14 @@ def show_diff(stat: bool = False, files_only: bool = False) -> None:
     main_repo = get_main_repo()
     default_branch = get_default_branch(main_repo)
 
-    console.print(f"[bold cyan]Agent Diff View - comparing against {default_branch}[/]")
+    out.print(f"[bold cyan]Agent Diff View - comparing against {default_branch}[/]")
 
     worktrees = list_worktrees(main_repo)
 
     for wt in worktrees:
         # For main repo, check if there are changes
         if wt.is_main:
-            changes = _get_diff(wt.path, default_branch, files_only=True)
+            changes = get_diff(wt.path, default_branch, files_only=True)
             if not changes.strip():
                 continue  # Skip main if no changes
 
@@ -164,7 +126,7 @@ def show_diff(stat: bool = False, files_only: bool = False) -> None:
             files_only=files_only,
         )
 
-    console.print()
+    out.print()
 
 
 # Cyclopts App

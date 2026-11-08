@@ -1,5 +1,7 @@
-"""CLI commands for hive."""
+"""CLI commands for hive.
 
-from . import completion, config_cmd, run, wt, zellij
-
-__all__ = ["completion", "config_cmd", "run", "wt", "zellij"]
+Deliberately empty (no re-exports): app.py registers each command module
+lazily via a "module:attribute" string target, and an eager `from . import
+...` here would import every command module up front, defeating that (see
+tests/test_architecture.py:test_app_import_is_light).
+"""
