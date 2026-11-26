@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import get_runtime_settings
-from ...core import paths, proc
+from ...core import paths, proc, trace
 from ...layout.model import TabSpec
 from ...state import client
 from ...state.pane_state import PaneState, title_for
@@ -39,10 +39,77 @@ def _pane_id(raw: str) -> str:
     return raw
 
 
+# Socket id of this process's own Zellij server, once `_session_lost` fired.
+_session_target: str | None = None
+_session_probed = False
+
+
 def _run(argv: list[str]) -> proc.Result | None:
-    """Run a zellij command; None on any failure."""
+    """Run a zellij command; None on any failure.
+
+    Zellij 0.46 resolves $ZELLIJ_SESSION_NAME through a session index, and a
+    session can drop out of it while still running. Every `zellij action`
+    then hangs until the timeout (or prints "Session '...' not found"),
+    while `zellij -s <socket id> action` still works. So after such a
+    failure, retarget `action` calls at our own server's socket id for the
+    rest of the process (`_server_socket_id`). Healthy sessions never pay
+    for this.
+    """
+    is_action = argv[:2] == ["zellij", "action"]
+    if is_action and _session_target:
+        argv = ["zellij", "-s", _session_target, *argv[1:]]
     result = proc.run(argv, timeout=2)
+    if not result.ok and is_action and _session_lost(result):
+        target = _adopt_server_id()
+        if target:
+            result = proc.run(["zellij", "-s", target, *argv[1:]], timeout=2)
     return result if result.ok else None
+
+
+def _session_lost(result: proc.Result) -> bool:
+    return result.returncode == 124 or (
+        "Session '" in result.stderr and "not found" in result.stderr
+    )
+
+
+def _adopt_server_id() -> str | None:
+    """Probe for our server's socket id once per process.
+
+    Only when Zellij no longer lists our session name: a healthy but slow
+    session can time out too, and retrying a `new-pane` there would create
+    a second pane."""
+    global _session_target, _session_probed
+    if not _session_probed:
+        _session_probed = True
+        name = os.environ.get("ZELLIJ_SESSION_NAME", "")
+        listed = proc.run(["zellij", "list-sessions", "--short"], timeout=2)
+        if not (listed.ok and name and name in listed.stdout.splitlines()):
+            _session_target = _server_socket_id()
+        trace.event("zellij", "session-fallback", id=_session_target)
+    return _session_target
+
+
+def _server_socket_id() -> str | None:
+    """Walk up from this process to its `zellij --server <socket>` ancestor
+    and return the socket's file name. One `ps` spawn for the whole tree."""
+    result = proc.run(["ps", "-Ao", "pid=,ppid=,command="], timeout=2)
+    if not result.ok:
+        return None
+    parents: dict[int, tuple[int, str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            parents[int(parts[0])] = (int(parts[1]), parts[2])
+    pid = os.getpid()
+    for _ in range(64):
+        if pid not in parents:
+            return None
+        ppid, command = parents[pid]
+        tokens = command.split()
+        if tokens and Path(tokens[0]).name == "zellij" and "--server" in tokens[:-1]:
+            return Path(tokens[tokens.index("--server") + 1]).name or None
+        pid = ppid
+    return None
 
 
 def _json(result: proc.Result | None) -> Any:

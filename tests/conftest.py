@@ -92,6 +92,9 @@ def clean_environment(tmp_path, short_tmp, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_tmp))
+    # Per-process cache of the Zellij socket-id fallback (mux/zellij/backend.py).
+    monkeypatch.setattr("hive_cli.mux.zellij.backend._session_target", None)
+    monkeypatch.setattr("hive_cli.mux.zellij.backend._session_probed", False)
     for var in (
         "HIVE_PANE_LABEL",
         "HIVE_PANE_SOCK",
