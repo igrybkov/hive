@@ -660,3 +660,92 @@ class TestSetPaneFields:
         assert backend.set_pane_branch("feat") is False
         assert backend.set_pane_custom_title("t") is False
         assert fake_proc.calls == []
+
+
+class TestSessionFallback:
+    """Zellij 0.46 resolves $ZELLIJ_SESSION_NAME through a session index. A
+    session missing from that index makes every `zellij action` hang (cut
+    off by the 2 s timeout) or print "Session '...' not found". The backend
+    then finds its own `zellij --server <socket>` ancestor and retries with
+    `-s <socket id>`, which still works."""
+
+    PS = (
+        "    1     0 /sbin/launchd\n"
+        "  500     1 /opt/homebrew/bin/zellij --server "
+        "/tmp/zellij/contract_version_1/b769e49a74c2\n"
+        "  600   500 /usr/bin/env HIVE_PANE_ID=1 hive run --restart\n"
+        "  700   600 hive pane new\n"
+    )
+
+    @pytest.fixture(autouse=True)
+    def _own_pid(self, monkeypatch):
+        monkeypatch.setattr(backend.os, "getpid", lambda: 700)
+
+    def _script_lost_session(self, fake_proc, **failure):
+        fake_proc.script(["zellij", "-s", "b769e49a74c2", "action"], stdout="[]")
+        fake_proc.script(["zellij", "action"], **failure)
+        fake_proc.script(["ps"], stdout=self.PS)
+
+    def test_timeout_retries_with_server_socket_id(self, fake_proc):
+        self._script_lost_session(fake_proc, returncode=124)
+        assert ZellijMux().list_tabs() == []
+        assert fake_proc.calls == [
+            ["zellij", "action", "list-tabs", "--json"],
+            ["zellij", "list-sessions", "--short"],
+            ["ps", "-Ao", "pid=,ppid=,command="],
+            ["zellij", "-s", "b769e49a74c2", "action", "list-tabs", "--json"],
+        ]
+
+    def test_not_found_message_retries_too(self, fake_proc):
+        self._script_lost_session(
+            fake_proc, returncode=2, stderr="Session 'home-network' not found."
+        )
+        ZellijMux().focus_pane("3")
+        assert fake_proc.calls[-1] == [
+            "zellij",
+            "-s",
+            "b769e49a74c2",
+            "action",
+            "focus-pane-id",
+            "3",
+        ]
+
+    def test_resolved_id_is_reused_without_another_probe(self, fake_proc):
+        self._script_lost_session(fake_proc, returncode=124)
+        mux = ZellijMux()
+        mux.list_tabs()
+        mux.focus_pane("3")
+        assert fake_proc.count("ps") == 1
+        assert fake_proc.calls[-1][:4] == ["zellij", "-s", "b769e49a74c2", "action"]
+        assert fake_proc.count("zellij", "action") == 1
+
+    def test_probes_once_when_no_server_ancestor(self, fake_proc, monkeypatch):
+        monkeypatch.setattr(backend.os, "getpid", lambda: 1)
+        self._script_lost_session(fake_proc, returncode=124)
+        mux = ZellijMux()
+        assert mux.list_tabs() == []
+        assert mux.focus_pane("3") is None
+        assert fake_proc.count("ps") == 1
+        assert fake_proc.count("zellij", "-s") == 0
+
+    def test_slow_but_listed_session_is_not_retried(self, fake_proc, monkeypatch):
+        """A timeout in a session Zellij still lists is just slowness:
+        retrying a new-pane there would create a second pane."""
+        monkeypatch.setenv("ZELLIJ_SESSION_NAME", "home-network")
+        fake_proc.script(["zellij", "list-sessions"], stdout="other\nhome-network\n")
+        self._script_lost_session(fake_proc, returncode=124)
+        assert ZellijMux().new_pane(["hive", "run"]) is None
+        assert fake_proc.count("ps") == 0
+        assert fake_proc.count("zellij", "-s") == 0
+        assert fake_proc.count("zellij", "action", "new-pane") == 1
+
+    def test_plain_failure_does_not_probe(self, fake_proc):
+        fake_proc.script(["zellij"], returncode=1)
+        ZellijMux().focus_pane("3")
+        assert fake_proc.count("ps") == 0
+
+    def test_non_action_commands_are_never_retargeted(self, fake_proc):
+        self._script_lost_session(fake_proc, returncode=124)
+        fake_proc.script(["zellij", "list-sessions"], returncode=124)
+        assert ZellijMux().session_exists("home-network") is False
+        assert fake_proc.count("ps") == 0
