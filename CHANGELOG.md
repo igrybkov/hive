@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.2.1 (2026-11-27)
+
+### Bug Fixes
+
+- **zellij**: Reach our own session by socket id when its name is unindexed
+  ([`0808d45`](https://github.com/igrybkov/hive/commit/0808d45e285e33c06d7aaef35b73c72198495332))
+
+
 ## v0.2.0 (2026-11-08)
 
 ### Bug Fixes
