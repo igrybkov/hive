@@ -47,7 +47,7 @@ def read_line_from_tty(
         if propagate_interrupt:
             raise
         return None
-    except (OSError, EOFError):
+    except OSError, EOFError:
         return None
 
 
@@ -70,7 +70,7 @@ def read_single_key() -> str | None:
                 return ch
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    except (OSError, EOFError, KeyboardInterrupt):
+    except OSError, EOFError, KeyboardInterrupt:
         return None
 
 

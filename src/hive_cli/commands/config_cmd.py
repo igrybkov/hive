@@ -99,7 +99,7 @@ def _get_default_yaml_content() -> str:
         config_pkg = resources.files("hive_cli.config")
         default_file = config_pkg.joinpath("default.yml")
         return default_file.read_text()
-    except (TypeError, AttributeError):
+    except TypeError, AttributeError:
         # Fallback for older Python or edge cases
         import hive_cli.config as config_module
 

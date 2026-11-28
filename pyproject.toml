@@ -7,20 +7,16 @@ name = "hive-cli"
 dynamic = ["version"]
 description = "Hive - Multi-agent worktree management CLI"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.15"
 classifiers = [
   # Hard guard: PyPI/TestPyPI reject any upload carrying a "Private ::" classifier.
   # This package is distributed via Git + GitHub Releases, never PyPI.
   "Private :: Do Not Upload",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 dependencies = [
- "cyclopts>=4.22",
+ "cyclopts>=4.22,<5",
  "prompt-toolkit>=3",
  "pydantic>=2",
  "pydantic-settings>=2",
@@ -67,7 +63,7 @@ include = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py314"
 line-length = 88
 lint.select = [ "E", "F", "I", "UP" ]
 

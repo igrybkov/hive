@@ -17,7 +17,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.2.0
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.15
 
       - name: Install dependencies
         run: uv sync --dev
@@ -38,7 +38,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.2.0
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.15
 
       - name: Install dependencies
         run: uv sync --dev

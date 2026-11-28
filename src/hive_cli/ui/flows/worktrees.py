@@ -109,7 +109,7 @@ def _prompt_new_branch() -> str | None:
         ).strip()
         # Empty result means user pressed Esc with empty input
         return result if result else None
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt, EOFError:
         raise KeyboardInterrupt
 
 
@@ -166,7 +166,7 @@ def _prompt_issue_branch(issue_number: int, issue_title: str) -> str | None:
         if not result or result == prefix:
             return None
         return result
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt, EOFError:
         raise KeyboardInterrupt
 
 
