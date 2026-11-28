@@ -25,14 +25,12 @@ import threading
 import tty
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any
 
 from rich.console import Console, RenderableType
 from rich.live import Live
 
 from . import console as ui_console
-
-T = TypeVar("T")
 
 QUIT_KEYS = ("q", "\x03")  # raw mode delivers Ctrl+C as a byte
 REFRESH_KEY = "r"
@@ -82,7 +80,7 @@ def _raw_mode(fd: int) -> Iterator[None]:
     """Raw input on a tty; a no-op when `fd` is not a terminal (pipes, tests)."""
     try:
         old = termios.tcgetattr(fd)
-    except (termios.error, OSError, ValueError):
+    except termios.error, OSError, ValueError:
         yield
         return
     tty.setraw(fd)
@@ -200,7 +198,7 @@ def _event_loop(
                 return key, last
 
 
-def watch(
+def watch[T](
     collect: Callable[[], T],
     render: Callable[[T], RenderableType],
     *,

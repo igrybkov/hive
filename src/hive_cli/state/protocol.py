@@ -35,6 +35,6 @@ def decode(line: bytes) -> dict | None:
     """The JSON object on ``line``, or None when it is not one."""
     try:
         obj = json.loads(line.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except UnicodeDecodeError, ValueError:
         return None
     return obj if isinstance(obj, dict) else None

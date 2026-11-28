@@ -86,7 +86,7 @@ async def _follow(sock: Path, queue: asyncio.Queue[SessionEvent]) -> None:
             last_version = state.version
             last_pane_id = state.pane_id
             await queue.put(event)
-    except (ConnectionRefusedError, FileNotFoundError, OSError):
+    except ConnectionRefusedError, FileNotFoundError, OSError:
         pass
     finally:
         if writer is not None:

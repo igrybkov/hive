@@ -115,7 +115,7 @@ def load_cached_issues(cache_path: Path | None) -> list[GitHubIssue]:
         with open(cache_path) as f:
             data = json.load(f)
             return [GitHubIssue.from_dict(issue) for issue in data]
-    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+    except json.JSONDecodeError, KeyError, FileNotFoundError:
         return []
 
 
@@ -134,7 +134,7 @@ def save_cached_issues(issues: list[GitHubIssue], cache_path: Path | None) -> No
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_path, "w") as f:
             json.dump([issue.to_dict() for issue in issues], f, indent=2)
-    except (OSError, json.JSONEncodeError):
+    except OSError, json.JSONEncodeError:
         # Silently ignore cache write errors
         pass
 

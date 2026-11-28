@@ -48,7 +48,7 @@ def get_main_repo() -> Path:
         return git_common_dir.resolve().parent
     try:
         return Path.cwd()
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError, OSError:
         raise RuntimeError(
             "Current directory no longer exists — navigate to a valid path first."
         ) from None

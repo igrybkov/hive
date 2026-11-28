@@ -118,7 +118,7 @@ def load_default_config() -> dict[str, Any]:
         default_file = config_pkg.joinpath("default.yml")
         content = default_file.read_text()
         return yaml.safe_load(content) or {}
-    except (TypeError, AttributeError):
+    except TypeError, AttributeError:
         # Fallback for older Python or edge cases
         import hive_cli.config as config_module
 

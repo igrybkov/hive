@@ -129,7 +129,7 @@ def _issue_title(worktree_path: str) -> str | None:
         return None
     try:
         first_line = task_file.read_text().splitlines()[0].strip()
-    except (OSError, IndexError):
+    except OSError, IndexError:
         return None
     return first_line.removeprefix("# Task: ")[:60] or None
 

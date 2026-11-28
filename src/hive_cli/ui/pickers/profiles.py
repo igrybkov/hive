@@ -132,7 +132,7 @@ def _prompt_new_profile(agent_name: str) -> str | None:
 
     try:
         name = input("Profile name: ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         return None
 
     if not name:
